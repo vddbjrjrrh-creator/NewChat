@@ -29,6 +29,41 @@ const TG_ENABLED = !!(TG_TOKEN && TG_BOT_NAME);
 const TG_SECRET = crypto.randomBytes(16).toString('hex');
 const PUBLIC_URL = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
 
+/* ================= ПЛАТЕЖИ ================= */
+/* Ключи ЮKassa. Без них кошелёк работает в тестовом режиме без реальных денег. */
+const YK_SHOP_ID = process.env.YOOKASSA_SHOP_ID || '';
+const YK_SECRET = process.env.YOOKASSA_SECRET_KEY || '';
+const YK_ENABLED = !!(YK_SHOP_ID && YK_SECRET);
+
+/* Выплаты включаются отдельно и только после договора с провайдером.
+   Пока выключено — заявки копятся и ждут ручного подтверждения. */
+const PAYOUTS_AUTO = process.env.PAYOUTS_AUTO === 'yes';
+
+/* Пароль для страницы модерации выплат */
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
+/* Комиссия площадки с продажи юзернейма, в процентах */
+const FEE_PERCENT = Number(process.env.FEE_PERCENT || 5);
+
+/* Премиум: цена и что даёт */
+const PREMIUM = {
+  price: Number(process.env.PREMIUM_PRICE || 500),
+  days: Number(process.env.PREMIUM_DAYS || 30),
+  slots: 5,
+  freeSlots: 3
+};
+
+/* Правила вывода. Меняются переменными окружения, если понадобится. */
+const RULES = {
+  holdDays: Number(process.env.HOLD_DAYS || 7),          // сколько дней деньги «остывают» после пополнения
+  earnedHoldDays: Number(process.env.EARNED_HOLD_DAYS || 14), // выручка с продаж ждёт дольше
+  minWithdraw: Number(process.env.MIN_WITHDRAW || 500),
+  maxPerDay: Number(process.env.MAX_PER_DAY || 50000),
+  maxPerRequest: Number(process.env.MAX_PER_REQUEST || 30000),
+  minTrust: Number(process.env.MIN_TRUST || 70),         // с низким доверием вывод закрыт
+  manualAbove: Number(process.env.MANUAL_ABOVE || 5000)  // выше этой суммы — только ручное подтверждение
+};
+
 /* ================= ХРАНИЛИЩЕ ================= */
 
 let db = {
@@ -40,14 +75,52 @@ let db = {
   verifyRequests: [],
   tokens: {},     // token -> userId
   codes: {},      // phone -> { code, expires }
-  tgSessions: {}  // session -> { created, chatId, status, token, needsSetup }
+  tgSessions: {}, // session -> { created, chatId, status, token, needsSetup }
+  payments: {},   // paymentId -> платёж от провайдера
+  deposits: {},   // userId -> [пополнения с данными карты]
+  payouts: [],    // заявки на вывод
+  cards: {}       // userId -> [карты, подтверждённые пополнением]
 };
 
-function load() {
+/* Постоянное хранилище.
+   На бесплатном Render диск стирается при каждом перезапуске и после сна,
+   поэтому база живёт в Postgres, если задан DATABASE_URL.
+   Без него — файл рядом с сервером (годится только для локальной разработки). */
+const DATABASE_URL = process.env.DATABASE_URL || '';
+let pgPool = null;
+
+async function load() {
+  if (DATABASE_URL) {
+    try {
+      const { Pool } = require('pg');
+      pgPool = new Pool({
+        connectionString: DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        max: 3
+      });
+      await pgPool.query(
+        'CREATE TABLE IF NOT EXISTS newchat_db (id int PRIMARY KEY, data jsonb, updated_at timestamptz)'
+      );
+      const r = await pgPool.query('SELECT data FROM newchat_db WHERE id = 1');
+      if (r.rows.length && r.rows[0].data) {
+        db = Object.assign(db, r.rows[0].data);
+        console.log('База загружена из Postgres: ' + Object.keys(db.users).length + ' аккаунтов');
+      } else {
+        console.log('Postgres подключён, база пустая — первый запуск');
+      }
+      return;
+    } catch (e) {
+      console.error('Postgres недоступен:', e.message);
+      pgPool = null;
+      /* падаем на файл, чтобы сервер всё-таки поднялся */
+    }
+  }
+
+  console.warn('ВНИМАНИЕ: база хранится в файле. На бесплатном Render аккаунты пропадут при перезапуске. Задайте DATABASE_URL.');
   try {
     if (fs.existsSync(DATA_FILE)) {
       db = Object.assign(db, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
-      console.log('База загружена');
+      console.log('База загружена из файла');
     }
   } catch (e) {
     console.error('Не удалось прочитать базу:', e.message);
@@ -55,16 +128,46 @@ function load() {
 }
 
 let saveTimer = null;
+let saving = false;
+let saveAgain = false;
+
+async function writeNow() {
+  if (saving) { saveAgain = true; return; }
+  saving = true;
+  try {
+    if (pgPool) {
+      await pgPool.query(
+        `INSERT INTO newchat_db (id, data, updated_at) VALUES (1, $1, now())
+         ON CONFLICT (id) DO UPDATE SET data = $1, updated_at = now()`,
+        [JSON.stringify(db)]
+      );
+    } else {
+      fs.writeFileSync(DATA_FILE, JSON.stringify(db));
+    }
+  } catch (e) {
+    console.error('Не удалось сохранить базу:', e.message);
+  } finally {
+    saving = false;
+    if (saveAgain) { saveAgain = false; writeNow(); }
+  }
+}
+
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(db));
-    } catch (e) {
-      console.error('Не удалось сохранить базу:', e.message);
-    }
-  }, 200);
+  saveTimer = setTimeout(writeNow, 300);
 }
+
+/* Render присылает SIGTERM перед сном — успеваем дописать всё на диск */
+let bye = false;
+async function shutdown() {
+  if (bye) return;
+  bye = true;
+  clearTimeout(saveTimer);
+  await writeNow();
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 const uid = () => crypto.randomBytes(9).toString('hex');
 const now = () => Date.now();
@@ -122,6 +225,12 @@ function userByToken(token) {
   const id = db.tokens[token];
   return id ? db.users[id] : null;
 }
+function isPremium(user) {
+  return !!(user.premiumUntil && user.premiumUntil > now());
+}
+function slotLimit(user) {
+  return isPremium(user) ? PREMIUM.slots : PREMIUM.freeSlots;
+}
 function chatIdFor(a, b) {
   return [a, b].sort().join(':');
 }
@@ -164,7 +273,13 @@ function marketList(exceptUser) {
 function fullState(user) {
   return {
     user: Object.assign(publicUser(user), {
-      phone: user.phone, balance: user.balance, trust: user.trust
+      phone: user.phone, balance: user.balance, trust: user.trust,
+      frozen: !!user.frozen,
+      premium: isPremium(user),
+      premiumUntil: user.premiumUntil || 0,
+      slots: slotLimit(user),
+      premiumPrice: PREMIUM.price,
+      premiumDays: PREMIUM.days
     }),
     chats: userChats(user.id),
     usernames: myUsernames(user.id),
@@ -341,6 +456,182 @@ async function startTelegram() {
       }
     })();
   }
+}
+
+/* ================= ПЛАТЁЖНАЯ СИСТЕМА ================= */
+
+async function yk(method, path, body, idempotenceKey) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Basic ' + Buffer.from(YK_SHOP_ID + ':' + YK_SECRET).toString('base64')
+  };
+  if (idempotenceKey) headers['Idempotence-Key'] = idempotenceKey;
+
+  try {
+    const res = await fetch('https://api.yookassa.ru/v3' + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20000)
+    });
+    return await res.json();
+  } catch (e) {
+    console.error('ЮKassa ' + path + ':', e.message);
+    return null;
+  }
+}
+
+/* Отпечаток карты: по нему понимаем, что это та же самая карта */
+function cardKey(details) {
+  if (!details) return null;
+  if (details.type === 'sbp') {
+    /* СБП — платёж по номеру телефона через банк */
+    return 'sbp:' + (details.payer_bank_details && details.payer_bank_details.bank_id || 'unknown');
+  }
+  if (details.card) {
+    const c = details.card;
+    return 'card:' + (c.first6 || '') + ':' + (c.last4 || '');
+  }
+  return null;
+}
+
+function cardTitle(details) {
+  if (!details) return 'Неизвестно';
+  if (details.type === 'sbp') {
+    const b = details.payer_bank_details;
+    return 'СБП · ' + ((b && b.bank_name) || 'банк');
+  }
+  if (details.card) return 'Карта •• ' + (details.card.last4 || '????');
+  return 'Платёж';
+}
+
+/* Зачисление денег — только по подтверждению от провайдера, никогда по слову клиента */
+function creditPayment(payment) {
+  if (db.payments[payment.id] && db.payments[payment.id].credited) return false;
+
+  const meta = payment.metadata || {};
+  const user = db.users[meta.userId];
+  if (!user) return false;
+
+  const amount = Math.round(parseFloat(payment.amount.value));
+  const details = payment.payment_method || {};
+  const key = cardKey(details);
+  const title = cardTitle(details);
+
+  user.balance += amount;
+
+  db.deposits[user.id] = db.deposits[user.id] || [];
+  db.deposits[user.id].push({
+    id: payment.id,
+    amount,
+    left: amount,          // сколько из этого пополнения ещё можно вывести
+    cardKey: key,
+    cardTitle: title,
+    time: now(),
+    refunded: 0
+  });
+
+  /* Карта попадает в список выплат только потому, что с неё пришли деньги */
+  if (key) {
+    db.cards[user.id] = db.cards[user.id] || [];
+    if (!db.cards[user.id].some(c => c.key === key)) {
+      db.cards[user.id].push({ key, title, addedAt: now(), paymentId: payment.id });
+    }
+  }
+
+  db.payments[payment.id] = { userId: user.id, amount, credited: true, time: now() };
+  db.history[user.id] = db.history[user.id] || [];
+  db.history[user.id].unshift({
+    amt: amount,
+    title: 'Пополнение',
+    sub: title,
+    time: now()
+  });
+  save();
+
+  serviceMessage(user.id, `Кошелёк пополнен на ${amount.toLocaleString('ru')} ₽ (${title}).`);
+  push(user.id, { type: 'state' });
+  return true;
+}
+
+/* Возврат или спорная операция — забираем деньги обратно */
+function handleRefund(payment) {
+  const rec = db.payments[payment.id];
+  if (!rec) return;
+  const user = db.users[rec.userId];
+  if (!user) return;
+
+  const refunded = Math.round(parseFloat(payment.refunded_amount ? payment.refunded_amount.value : payment.amount.value));
+  const dep = (db.deposits[user.id] || []).find(d => d.id === payment.id);
+  if (dep) {
+    dep.refunded = refunded;
+    dep.left = Math.max(0, dep.amount - refunded);
+  }
+
+  user.balance -= refunded;
+  /* Ушли в минус — значит вывели то, что вернули по спору. Замораживаем. */
+  if (user.balance < 0) {
+    user.frozen = true;
+    user.trust = Math.max(0, user.trust - 30);
+    serviceMessage(user.id, 'По одному из пополнений прошёл возврат. Кошелёк заморожен, свяжитесь с поддержкой.');
+  } else {
+    serviceMessage(user.id, `Возврат по пополнению: ${refunded.toLocaleString('ru')} ₽ списано с баланса.`);
+  }
+
+  db.history[user.id] = db.history[user.id] || [];
+  db.history[user.id].unshift({ amt: -refunded, title: 'Возврат пополнения', sub: 'спор по платежу', time: now() });
+  save();
+  push(user.id, { type: 'state' });
+}
+
+/* ================= ЧТО МОЖНО ВЫВЕСТИ ================= */
+
+function withdrawInfo(user) {
+  const deposits = db.deposits[user.id] || [];
+  const holdMs = RULES.holdDays * 86400e3;
+
+  /* Готовы к выводу только «остывшие» пополнения */
+  const perCard = {};
+  let ripe = 0, waiting = 0;
+
+  for (const d of deposits) {
+    if (d.left <= 0) continue;
+    if (now() - d.time >= holdMs) {
+      ripe += d.left;
+      if (d.cardKey) perCard[d.cardKey] = (perCard[d.cardKey] || 0) + d.left;
+    } else {
+      waiting += d.left;
+    }
+  }
+
+  /* Заработанное внутри (продажи) — отдельный счёт с длинной выдержкой */
+  const earned = Math.max(0, user.balance - deposits.reduce((s, d) => s + d.left, 0));
+
+  const dayAgo = now() - 86400e3;
+  const usedToday = db.payouts
+    .filter(p => p.userId === user.id && p.time > dayAgo && p.status !== 'rejected')
+    .reduce((s, p) => s + p.amount, 0);
+
+  const cards = (db.cards[user.id] || []).map(c => ({
+    key: c.key,
+    title: c.title,
+    available: perCard[c.key] || 0
+  }));
+
+  const blocks = [];
+  if (user.frozen) blocks.push('Кошелёк заморожен');
+  if ((user.trust || 0) < RULES.minTrust) blocks.push('Низкая батарейка доверия');
+  if (!cards.length) blocks.push('Сначала пополните кошелёк — вывод возможен только на свою карту');
+
+  return {
+    ripe, waiting, earned, cards,
+    usedToday,
+    dayLimit: RULES.maxPerDay,
+    minWithdraw: RULES.minWithdraw,
+    holdDays: RULES.holdDays,
+    earnedHoldDays: RULES.earnedHoldDays,
+    blocks
+  };
 }
 
 /* ================= WEBSOCKET ================= */
@@ -608,41 +899,226 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
 
 const RATES = { rub: 1, usd: 91, aed: 24.8 };
 
-route('POST', '/api/wallet/topup', async (req, res, body, user) => {
-  const cur = RATES[body.currency] ? body.currency : 'rub';
-  const amount = Number(body.amount);
-  if (!(amount > 0)) return send(res, 400, { error: 'Введите сумму' });
+/* Создание платежа. Деньги на баланс НЕ зачисляются здесь —
+   только после подтверждения от платёжной системы. */
+route('POST', '/api/wallet/payment/create', async (req, res, body, user) => {
+  const amount = Math.round(Number(body.amount));
+  const method = body.method === 'card' ? 'bank_card' : 'sbp';
 
-  const rub = Math.round(amount * RATES[cur]);
-  user.balance += rub;
-  db.history[user.id] = db.history[user.id] || [];
-  db.history[user.id].unshift({
-    amt: rub,
-    title: 'Пополнение · ' + (cur === 'rub' ? '₽' : cur === 'usd' ? '$' : 'AED'),
-    sub: cur === 'rub' ? 'с карты' : amount + ' → конвертация в рубли',
-    time: now()
-  });
+  if (!(amount >= 100)) return send(res, 400, { error: 'Минимум 100 ₽' });
+  if (amount > 100000) return send(res, 400, { error: 'Максимум 100 000 ₽ за раз' });
+  if (user.frozen) return send(res, 403, { error: 'Кошелёк заморожен' });
+
+  if (!YK_ENABLED) {
+    /* Тестовый режим: платёжка не подключена, зачисляем сразу и честно об этом пишем */
+    const fake = {
+      id: 'test-' + uid(),
+      amount: { value: String(amount) },
+      metadata: { userId: user.id },
+      payment_method: { type: 'bank_card', card: { first6: '555555', last4: '4444' } }
+    };
+    creditPayment(fake);
+    return send(res, 200, { testMode: true, balance: user.balance });
+  }
+
+  const payment = await yk('POST', '/payments', {
+    amount: { value: amount.toFixed(2), currency: 'RUB' },
+    payment_method_data: { type: method },
+    confirmation: {
+      type: 'redirect',
+      return_url: (body.returnUrl || PUBLIC_URL || 'https://example.com') + '?paid=1'
+    },
+    capture: true,
+    description: 'Пополнение кошелька Newchat',
+    metadata: { userId: user.id }
+  }, uid());
+
+  if (!payment || !payment.id) {
+    return send(res, 502, { error: 'Платёжная система недоступна' });
+  }
+
+  db.payments[payment.id] = { userId: user.id, amount, credited: false, time: now() };
   save();
-  send(res, 200, { balance: user.balance, history: db.history[user.id] });
+
+  send(res, 200, {
+    paymentId: payment.id,
+    url: payment.confirmation && payment.confirmation.confirmation_url
+  });
 });
 
-route('POST', '/api/wallet/withdraw', async (req, res, body, user) => {
-  const card = String(body.card || '').replace(/\D/g, '');
-  const amount = Math.round(Number(body.amount));
-  if (card.length < 16) return send(res, 400, { error: 'Введите номер карты полностью' });
-  if (!(amount >= 100)) return send(res, 400, { error: 'Минимальная сумма — 100 ₽' });
-  if (amount > user.balance) return send(res, 400, { error: 'Недостаточно средств' });
+/* Приложение спрашивает: платёж прошёл? Проверяем у провайдера, не у клиента. */
+route('POST', '/api/wallet/payment/check', async (req, res, body, user) => {
+  const id = String(body.paymentId || '');
+  const rec = db.payments[id];
+  if (!rec || rec.userId !== user.id) return send(res, 404, { error: 'Платёж не найден' });
+  if (rec.credited) return send(res, 200, { status: 'ok', balance: user.balance });
+  if (!YK_ENABLED) return send(res, 200, { status: 'pending' });
 
+  const payment = await yk('GET', '/payments/' + id);
+  if (!payment) return send(res, 200, { status: 'pending' });
+
+  if (payment.status === 'succeeded') {
+    creditPayment(payment);
+    return send(res, 200, { status: 'ok', balance: user.balance });
+  }
+  if (payment.status === 'canceled') return send(res, 200, { status: 'canceled' });
+  send(res, 200, { status: 'pending' });
+});
+
+/* Уведомление от платёжной системы */
+route('POST', '/yookassa/webhook', async (req, res, body) => {
+  send(res, 200, { ok: true });
+  try {
+    const object = body && body.object;
+    if (!object || !object.id) return;
+
+    /* Телу уведомления не доверяем — перезапрашиваем платёж у провайдера */
+    const payment = YK_ENABLED ? await yk('GET', '/payments/' + object.id) : object;
+    if (!payment) return;
+
+    if (body.event === 'payment.succeeded' && payment.status === 'succeeded') {
+      creditPayment(payment);
+    }
+    if (body.event === 'refund.succeeded' || payment.refunded_amount) {
+      handleRefund(payment);
+    }
+  } catch (e) {
+    console.error('Ошибка вебхука оплаты:', e.message);
+  }
+});
+
+/* Что человек видит на экране вывода */
+route('GET', '/api/wallet/withdraw/info', async (req, res, body, user) => {
+  send(res, 200, withdrawInfo(user));
+});
+
+/* Заявка на вывод */
+route('POST', '/api/wallet/withdraw', async (req, res, body, user) => {
+  const amount = Math.round(Number(body.amount));
+  const cardKeyReq = String(body.card || '');
+  const info = withdrawInfo(user);
+
+  if (info.blocks.length) return send(res, 403, { error: info.blocks[0] });
+  if (!(amount >= RULES.minWithdraw)) return send(res, 400, { error: `Минимум ${RULES.minWithdraw} ₽` });
+  if (amount > RULES.maxPerRequest) return send(res, 400, { error: `Максимум ${RULES.maxPerRequest.toLocaleString('ru')} ₽ за раз` });
+  if (amount > user.balance) return send(res, 400, { error: 'Недостаточно средств' });
+  if (info.usedToday + amount > RULES.maxPerDay) return send(res, 400, { error: 'Превышен дневной лимит' });
+
+  const card = info.cards.find(c => c.key === cardKeyReq);
+  if (!card) return send(res, 400, { error: 'Выберите карту, с которой пополняли' });
+  if (amount > card.available) {
+    return send(res, 400, {
+      error: `На эту карту доступно ${card.available.toLocaleString('ru')} ₽. Остальное ещё «остывает» после пополнения.`
+    });
+  }
+
+  /* Списываем сразу, чтобы нельзя было подать две заявки на одни деньги */
   user.balance -= amount;
+
+  let rest = amount;
+  for (const d of (db.deposits[user.id] || [])) {
+    if (rest <= 0) break;
+    if (d.cardKey !== cardKeyReq || d.left <= 0) continue;
+    if (now() - d.time < RULES.holdDays * 86400e3) continue;
+    const take = Math.min(d.left, rest);
+    d.left -= take;
+    rest -= take;
+  }
+
+  const payout = {
+    id: uid(),
+    userId: user.id,
+    amount,
+    card: cardKeyReq,
+    cardTitle: card.title,
+    status: (PAYOUTS_AUTO && amount <= RULES.manualAbove) ? 'processing' : 'pending',
+    time: now()
+  };
+  db.payouts.push(payout);
+
   db.history[user.id] = db.history[user.id] || [];
   db.history[user.id].unshift({
     amt: -amount,
-    title: 'Вывод на карту •• ' + card.slice(-4),
-    sub: 'комиссия 1%',
+    title: 'Вывод на ' + card.title,
+    sub: payout.status === 'pending' ? 'на проверке' : 'отправлено',
     time: now()
   });
   save();
-  send(res, 200, { balance: user.balance, history: db.history[user.id], last4: card.slice(-4) });
+
+  serviceMessage(user.id, payout.status === 'pending'
+    ? `Заявка на вывод ${amount.toLocaleString('ru')} ₽ принята и проверяется. Обычно занимает до суток.`
+    : `Вывод ${amount.toLocaleString('ru')} ₽ отправлен на ${card.title}.`);
+
+  send(res, 200, { ok: true, status: payout.status, balance: user.balance });
+});
+
+/* ---------- Модерация выплат (только для владельца) ---------- */
+
+route('POST', '/api/admin/payouts', async (req, res, body) => {
+  if (!ADMIN_TOKEN || body.adminToken !== ADMIN_TOKEN) return send(res, 403, { error: 'Нет доступа' });
+
+  if (body.action === 'list') {
+    return send(res, 200, {
+      payouts: db.payouts.slice(-100).reverse().map(p => {
+        const u = db.users[p.userId];
+        return Object.assign({}, p, {
+          user: u ? { name: u.name, username: u.username, phone: u.phone, trust: u.trust } : null
+        });
+      })
+    });
+  }
+
+  const payout = db.payouts.find(p => p.id === body.payoutId);
+  if (!payout) return send(res, 404, { error: 'Заявка не найдена' });
+  const user = db.users[payout.userId];
+
+  if (body.action === 'approve') {
+    payout.status = 'done';
+    save();
+    if (user) serviceMessage(user.id, `Вывод ${payout.amount.toLocaleString('ru')} ₽ выполнен.`);
+    return send(res, 200, { ok: true });
+  }
+
+  if (body.action === 'reject') {
+    payout.status = 'rejected';
+    payout.reason = String(body.reason || 'не прошло проверку');
+    if (user) {
+      user.balance += payout.amount;  // возвращаем деньги на баланс
+      serviceMessage(user.id, `Вывод ${payout.amount.toLocaleString('ru')} ₽ отклонён: ${payout.reason}. Деньги вернулись на баланс.`);
+      push(user.id, { type: 'state' });
+    }
+    save();
+    return send(res, 200, { ok: true });
+  }
+
+  send(res, 400, { error: 'Неизвестное действие' });
+});
+
+/* ---------- Премиум ---------- */
+
+route('POST', '/api/premium/buy', async (req, res, body, user) => {
+  if (user.frozen) return send(res, 403, { error: 'Кошелёк заморожен' });
+  if (user.balance < PREMIUM.price) {
+    return send(res, 400, { error: `Не хватает ${(PREMIUM.price - user.balance).toLocaleString('ru')} ₽. Пополните кошелёк.` });
+  }
+
+  user.balance -= PREMIUM.price;
+  /* Если премиум ещё действует — продлеваем, а не обнуляем */
+  const from = isPremium(user) ? user.premiumUntil : now();
+  user.premiumUntil = from + PREMIUM.days * 86400e3;
+
+  db.history[user.id] = db.history[user.id] || [];
+  db.history[user.id].unshift({
+    amt: -PREMIUM.price,
+    title: 'Newchat Premium',
+    sub: PREMIUM.days + ' дней · ' + PREMIUM.slots + ' слотов',
+    time: now()
+  });
+  save();
+
+  const until = new Date(user.premiumUntil).toLocaleDateString('ru');
+  serviceMessage(user.id, `Премиум активен до ${until}. Теперь у вас ${PREMIUM.slots} слотов под юзернеймы.`);
+  send(res, 200, { state: fullState(user) });
 });
 
 /* ---------- Юзернеймы и биржа ---------- */
@@ -650,11 +1126,15 @@ route('POST', '/api/wallet/withdraw', async (req, res, body, user) => {
 route('POST', '/api/usernames/claim', async (req, res, body, user) => {
   const username = normUsername(body.username);
   const mine = myUsernames(user.id);
-  const limit = 3;
+  const limit = slotLimit(user);
 
   if (username.length < 3) return send(res, 400, { error: 'Минимум 3 символа' });
   if (db.usernames[username]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
-  if (mine.length >= limit) return send(res, 400, { error: 'Все слоты заняты' });
+  if (mine.length >= limit) {
+    return send(res, 400, {
+      error: isPremium(user) ? 'Все слоты заняты' : `Занято ${limit} из ${limit}. Премиум даёт ${PREMIUM.slots} слотов.`
+    });
+  }
 
   db.usernames[username] = { owner: user.id, main: false, forSale: false, price: 0 };
   save();
@@ -682,19 +1162,30 @@ route('POST', '/api/usernames/buy', async (req, res, body, user) => {
 
   if (!rec || !rec.forSale) return send(res, 404, { error: 'Лот не найден' });
   if (rec.owner === user.id) return send(res, 400, { error: 'Это ваш лот' });
+  if (user.frozen) return send(res, 403, { error: 'Кошелёк заморожен' });
   if (user.balance < rec.price) return send(res, 400, { error: 'Недостаточно средств' });
-  if (myUsernames(user.id).length >= 3) return send(res, 400, { error: 'Нет свободных слотов' });
+  if (myUsernames(user.id).length >= slotLimit(user)) {
+    return send(res, 400, { error: `Нет свободных слотов. Премиум даёт ${PREMIUM.slots}.` });
+  }
 
   const seller = db.users[rec.owner];
   const price = rec.price;
+  /* Комиссия площадки — на неё живёт сервис */
+  const fee = Math.round(price * FEE_PERCENT / 100);
+  const toSeller = price - fee;
 
   user.balance -= price;
-  seller.balance += price;
+  seller.balance += toSeller;
 
   db.history[user.id] = db.history[user.id] || [];
   db.history[user.id].unshift({ amt: -price, title: 'Покупка @' + username, sub: 'биржа юзернеймов', time: now() });
   db.history[seller.id] = db.history[seller.id] || [];
-  db.history[seller.id].unshift({ amt: price, title: 'Продажа @' + username, sub: 'биржа юзернеймов', time: now() });
+  db.history[seller.id].unshift({
+    amt: toSeller,
+    title: 'Продажа @' + username,
+    sub: fee ? `комиссия ${FEE_PERCENT}% — ${fee.toLocaleString('ru')} ₽` : 'биржа юзернеймов',
+    time: now()
+  });
 
   rec.owner = user.id;
   rec.forSale = false;
@@ -702,7 +1193,10 @@ route('POST', '/api/usernames/buy', async (req, res, body, user) => {
   rec.main = false;
   save();
 
-  serviceMessage(seller.id, `Юзернейм @${username} продан за ${price.toLocaleString('ru')} ₽. Деньги зачислены на кошелёк.`);
+  serviceMessage(seller.id,
+    `Юзернейм @${username} продан за ${price.toLocaleString('ru')} ₽.` +
+    (fee ? ` Комиссия ${FEE_PERCENT}% — ${fee.toLocaleString('ru')} ₽.` : '') +
+    ` На кошелёк зачислено ${toSeller.toLocaleString('ru')} ₽. Тратить внутри можно сразу, вывод — после проверки.`);
   push(seller.id, { type: 'state' });
 
   send(res, 200, { state: fullState(user) });
@@ -729,7 +1223,13 @@ route('GET', '/api/config', async (req, res) => {
   send(res, 200, {
     telegram: TG_ENABLED,
     botName: TG_BOT_NAME,
-    sms: SMS_ENABLED
+    sms: SMS_ENABLED,
+    payments: YK_ENABLED,
+    rules: {
+      minWithdraw: RULES.minWithdraw,
+      holdDays: RULES.holdDays,
+      maxPerDay: RULES.maxPerDay
+    }
   });
 });
 
@@ -782,7 +1282,12 @@ route('POST', '/telegram/webhook', async (req, res, body) => {
 /* ---------- Служебное ---------- */
 
 route('GET', '/api/health', async (req, res) => {
-  send(res, 200, { ok: true, users: Object.keys(db.users).length });
+  send(res, 200, {
+    ok: true,
+    users: Object.keys(db.users).length,
+    storage: pgPool ? 'postgres' : 'file',
+    persistent: !!pgPool
+  });
 });
 
 /* ================= СЕРВЕР ================= */
@@ -793,6 +1298,8 @@ const OPEN_ROUTES = [
   'POST /api/auth/telegram/start',
   'POST /api/auth/telegram/check',
   'POST /telegram/webhook',
+  'POST /yookassa/webhook',
+  'POST /api/admin/payouts',
   'GET /api/config',
   'GET /api/health'
 ];
@@ -854,8 +1361,9 @@ setInterval(() => {
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.ping(); });
 }, 30000);
 
-load();
-server.listen(PORT, () => {
-  console.log('Newchat-сервер запущен на порту ' + PORT);
-  startTelegram();
+load().then(() => {
+  server.listen(PORT, () => {
+    console.log('Newchat-сервер запущен на порту ' + PORT);
+    startTelegram();
+  });
 });

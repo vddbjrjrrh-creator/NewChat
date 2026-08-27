@@ -479,6 +479,24 @@ body{
 <body>
 <div class="app" id="app">
 
+  <!-- ЗАГРУЗКА: сервер на бесплатном тарифе может просыпаться до минуты -->
+  <div class="screen onb active" id="s-boot">
+    <div>
+      <div class="logo-orb">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+      </div>
+      <h2>Newchat</h2>
+      <p class="sub" id="boot-msg">Подключаемся…</p>
+      <div id="boot-retry" style="display:none">
+        <button class="btn" onclick="boot()">Попробовать снова</button>
+        <div class="law-note" style="margin-top:12px">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+          Аккаунт на месте — не удалось достучаться до сервера. Проверьте интернет и попробуйте ещё раз.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ОНБОРДИНГ: ТЕЛЕФОН -->
   <div class="screen onb" id="s-auth">
     <div>
@@ -671,7 +689,7 @@ body{
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             Пополнить
           </button>
-          <button class="wa-btn" onclick="openSheet('sheet-withdraw')">
+          <button class="wa-btn" onclick="openWithdraw()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
             На карту
           </button>
@@ -701,35 +719,26 @@ body{
     <div class="sheet" id="sheet-topup">
       <div class="grip"></div>
       <h3>Пополнить кошелёк</h3>
-      <p class="desc">Любая валюта сразу конвертируется в рубли по текущему курсу.</p>
+      <p class="desc">Деньги зачислятся после подтверждения банком.</p>
       <div class="cur-row">
-        <button class="cur-btn on" id="cur-rub" onclick="setCur('rub')">₽<small>Рубли</small></button>
-        <button class="cur-btn" id="cur-usd" onclick="setCur('usd')">$<small>Доллары</small></button>
-        <button class="cur-btn" id="cur-aed" onclick="setCur('aed')">AED<small>Дирхамы</small></button>
+        <button class="cur-btn on" id="pm-sbp" onclick="setMethod('sbp')" style="font-family:'Manrope';font-size:.85rem">СБП<small>Быстрые платежи</small></button>
+        <button class="cur-btn" id="pm-card" onclick="setMethod('card')" style="font-family:'Manrope';font-size:.85rem">Карта<small>Visa · MIR · MC</small></button>
       </div>
       <div class="field" style="margin-bottom:12px">
-        <input type="number" placeholder="Сумма" id="topup-amount" oninput="updConv()" inputmode="decimal">
-        <span class="mono" style="color:var(--ink-2)" id="cur-sign">₽</span>
+        <input type="number" placeholder="Сумма от 100 ₽" id="topup-amount" inputmode="decimal">
+        <span class="mono" style="color:var(--ink-2)">₽</span>
       </div>
-      <div class="conv-preview" id="conv-preview">На баланс поступит: <b class="mono">0 ₽</b></div>
-      <button class="btn" onclick="doTopup()">Пополнить</button>
+      <div class="law-note" style="margin-bottom:14px">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        Вывести деньги можно будет только на тот счёт, с которого пополняли.
+      </div>
+      <button class="btn" onclick="doTopup()">Перейти к оплате</button>
     </div>
 
     <div class="sheet" id="sheet-withdraw">
       <div class="grip"></div>
-      <h3>Вывод на карту</h3>
-      <p class="desc">Рубли с баланса поступят на банковскую карту в течение пары минут.</p>
-      <div class="field" style="margin-bottom:12px">
-        <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink-2)" stroke-width="2" width="19" height="19"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/></svg>
-        <input type="text" placeholder="Номер карты" id="wd-card" maxlength="19" oninput="fmtCard(this)" inputmode="numeric">
-      </div>
-      <div class="field" style="margin-bottom:12px">
-        <input type="number" placeholder="Сумма" id="wd-amount" oninput="updWd()" inputmode="decimal">
-        <span class="mono" style="color:var(--ink-2)">₽</span>
-      </div>
-      <div class="conv-preview" id="wd-preview">Придёт на карту: <b class="mono">0 ₽</b></div>
-      <p class="fee-note">Комиссия 1% · минимум 100 ₽</p>
-      <button class="btn" onclick="doWithdraw()">Вывести</button>
+      <h3>Вывод денег</h3>
+      <div id="wd-body">Загрузка…</div>
     </div>
 
     <div class="sheet" id="sheet-nfc">
@@ -832,9 +841,9 @@ body{
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 100 18c1.5 0 2-1 2-2s-1-1.5-1-2.5 1-1.5 2.5-1.5H17a4 4 0 004-4c0-4.5-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/></svg>
           Оформление профиля<div class="spacer"></div><span class="val">цвет · статус</span>
         </div>
-        <div class="pitem glass-card" onclick="toast('Премиум скоро будет доступен')">
+        <div class="pitem glass-card" onclick="openPremium()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1 3-6z"/></svg>
-          Newchat Premium<div class="spacer"></div><span class="prem-chip">5 СЛОТОВ</span>
+          Newchat Premium<div class="spacer"></div><span class="prem-chip" id="p-premium">5 СЛОТОВ</span>
         </div>
         <div class="pitem glass-card" onclick="go('s-wallet')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>
@@ -884,6 +893,17 @@ body{
         Галочку «Разработчик» выдают только владельцы Newchat.
       </div>
       <button class="btn" onclick="submitVerify()">Отправить заявку</button>
+    </div>
+
+    <div class="sheet" id="sheet-premium">
+      <div class="grip"></div>
+      <div class="confirm-box">
+        <div class="big-ic" style="background:rgba(199,150,42,.14);color:var(--gold)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1 3-6z"/></svg>
+        </div>
+        <h3 id="prem-title">Newchat Premium</h3>
+        <div id="prem-body"></div>
+      </div>
     </div>
 
     <div class="sheet" id="sheet-deco">
@@ -1369,59 +1389,174 @@ function renderWallet(){
       '<div class="amt mono'+(plus?' plus':'')+'">'+(plus?'+':'−')+Math.abs(op.amt).toLocaleString('ru')+' ₽</div></div>';
   }).join('');
 }
-function setCur(c){
-  cur=c;
-  ['rub','usd','aed'].forEach(x=>document.getElementById('cur-'+x).classList.toggle('on',x===c));
-  document.getElementById('cur-sign').textContent=SIGNS[c];
-  updConv();
+/* ============ ПРЕМИУМ ============ */
+function openPremium(){
+  const u=S.user;
+  const box=document.getElementById('prem-body');
+  let html='';
+
+  if(u.premium){
+    const until=new Date(u.premiumUntil).toLocaleDateString('ru');
+    document.getElementById('prem-title').textContent='Премиум активен';
+    html='<p>Действует до <b>'+until+'</b>.<br>У вас '+u.slots+' слотов под юзернеймы.</p>'+
+      '<button class="btn" onclick="buyPremium()">Продлить за '+u.premiumPrice+' ₽</button>';
+  }else{
+    document.getElementById('prem-title').textContent='Newchat Premium';
+    html='<p style="text-align:left">'+
+      '· <b>'+u.slots+' → 5 слотов</b> под юзернеймы<br>'+
+      '· Больше места на бирже<br>'+
+      '· Поддержка проекта</p>'+
+      '<div class="conv-preview"><b class="mono">'+u.premiumPrice+' ₽</b> за '+u.premiumDays+' дней</div>'+
+      '<div class="conv-preview" style="border-style:solid">На балансе: <b class="mono">'+fmtRub(u.balance)+'</b></div>';
+    html+= u.balance>=u.premiumPrice
+      ? '<button class="btn" onclick="buyPremium()">Купить премиум</button>'
+      : '<button class="btn" onclick="closeSheets();go(\'s-wallet\');openSheet(\'sheet-topup\')">Пополнить кошелёк</button>';
+  }
+  html+='<button class="btn ghost" onclick="closeSheets()">Закрыть</button>';
+  box.innerHTML=html;
+  openSheet('sheet-premium');
 }
-function updConv(){
-  const v=parseFloat(document.getElementById('topup-amount').value)||0;
-  const rub=Math.round(v*RATES[cur]);
-  document.getElementById('conv-preview').innerHTML=
-    'На баланс поступит: <b class="mono">'+rub.toLocaleString('ru')+' ₽</b>'+
-    (cur!=='rub'&&v?'<br><span style="font-size:.72rem">курс: 1 '+SIGNS[cur]+' = '+RATES[cur]+' ₽</span>':'');
+async function buyPremium(){
+  try{
+    const r=await api('/api/premium/buy',{});
+    S=r.state;
+    closeSheets();renderProfile();
+    toast('Премиум активирован');
+  }catch(e){}
+}
+
+let payMethod='sbp';
+let pendingPayment=null;
+
+function setMethod(m){
+  payMethod=m;
+  document.getElementById('pm-sbp').classList.toggle('on',m==='sbp');
+  document.getElementById('pm-card').classList.toggle('on',m==='card');
 }
 async function doTopup(){
   const v=parseFloat(document.getElementById('topup-amount').value)||0;
-  if(v<=0){toast('Введите сумму');return}
+  if(v<100){toast('Минимум 100 ₽');return}
   try{
-    const r=await api('/api/wallet/topup',{amount:v,currency:cur});
-    S.user.balance=r.balance;S.history=r.history;
+    const r=await api('/api/wallet/payment/create',{
+      amount:v,method:payMethod,returnUrl:location.href.split('?')[0]
+    });
     document.getElementById('topup-amount').value='';
-    updConv();closeSheets();renderWallet();
-    toast('Кошелёк пополнен');
+    closeSheets();
+    if(r.testMode){
+      await refresh();
+      toast('Тестовый режим: зачислено '+fmtRub(v));
+      return;
+    }
+    pendingPayment=r.paymentId;
+    try{localStorage.setItem('newchat_pay',r.paymentId)}catch(e){}
+    const w=window.open(r.url,'_blank');
+    if(!w)location.href=r.url;
+    startPayPoll();
+    toast('Откройте страницу оплаты');
   }catch(e){}
 }
-function fmtCard(el){el.value=el.value.replace(/\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim()}
-function updWd(){
-  const v=parseFloat(document.getElementById('wd-amount').value)||0;
-  document.getElementById('wd-preview').innerHTML=
-    'Придёт на карту: <b class="mono">'+Math.max(0,Math.round(v*0.99)).toLocaleString('ru')+' ₽</b>';
+/* Ждём подтверждения оплаты — приложение спрашивает сервер, а сервер банк */
+let payPoll=null;
+function startPayPoll(){
+  clearInterval(payPoll);
+  let tries=0;
+  payPoll=setInterval(async()=>{
+    if(!pendingPayment||++tries>150){clearInterval(payPoll);return}
+    try{
+      const r=await api('/api/wallet/payment/check',{paymentId:pendingPayment});
+      if(r.status==='ok'){
+        clearInterval(payPoll);
+        pendingPayment=null;
+        try{localStorage.removeItem('newchat_pay')}catch(e){}
+        await refresh();
+        toast('Кошелёк пополнен');
+      }
+      if(r.status==='canceled'){
+        clearInterval(payPoll);pendingPayment=null;
+        try{localStorage.removeItem('newchat_pay')}catch(e){}
+        toast('Платёж отменён');
+      }
+    }catch(e){clearInterval(payPoll)}
+  },3000);
 }
-async function doWithdraw(){
-  const card=document.getElementById('wd-card').value.replace(/\s/g,'');
-  const v=parseFloat(document.getElementById('wd-amount').value)||0;
+
+/* ---- Вывод ---- */
+let wdInfo=null;
+let wdCard='';
+
+async function openWithdraw(){
+  openSheet('sheet-withdraw');
+  document.getElementById('wd-body').innerHTML='<p class="desc">Загрузка…</p>';
   try{
-    const r=await api('/api/wallet/withdraw',{card,amount:v});
-    S.user.balance=r.balance;S.history=r.history;
-    document.getElementById('wd-amount').value='';updWd();
-    closeSheets();renderWallet();
-    toast('Вывод '+fmtRub(v)+' на карту •• '+r.last4);
+    wdInfo=await api('/api/wallet/withdraw/info');
+    renderWithdraw();
+  }catch(e){
+    document.getElementById('wd-body').innerHTML='<p class="desc">Не удалось загрузить</p>';
+  }
+}
+function renderWithdraw(){
+  const i=wdInfo;
+  let html='';
+
+  if(i.blocks.length){
+    html+='<div class="law-note" style="background:var(--danger-soft);border-color:rgba(232,69,60,.3);color:var(--danger);margin-bottom:14px">'+
+      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l10 18H2L12 3z"/></svg>'+esc(i.blocks[0])+'</div>';
+  }
+
+  html+='<p class="desc">Вывести можно только на счёт, с которого пополняли. '+
+    'После пополнения деньги «остывают» '+i.holdDays+' дней — так работает защита от мошенников.</p>';
+
+  html+='<div class="conv-preview" style="text-align:left">'+
+    'Готово к выводу: <b class="mono">'+i.ripe.toLocaleString('ru')+' ₽</b>';
+  if(i.waiting>0)html+='<br><span style="font-size:.75rem">Ещё остывает: '+i.waiting.toLocaleString('ru')+' ₽</span>';
+  if(i.earned>0)html+='<br><span style="font-size:.75rem">Заработано внутри: '+i.earned.toLocaleString('ru')+' ₽ · выводится после проверки</span>';
+  html+='</div>';
+
+  if(i.cards.length&&!i.blocks.length){
+    html+='<div class="deco-label">Куда вывести</div>';
+    html+=i.cards.map((c,n)=>
+      '<div class="uname-card glass-card" style="margin:8px 0 0;cursor:pointer" onclick="pickCard(\''+c.key+'\')" id="wdc-'+n+'">'+
+      '<div class="u"><div class="h" style="font-size:.92rem">'+esc(c.title)+'</div>'+
+      '<div class="p">доступно '+c.available.toLocaleString('ru')+' ₽</div></div>'+
+      (wdCard===c.key?'<span class="tag-sale">ВЫБРАНО</span>':'')+'</div>'
+    ).join('');
+
+    html+='<div class="field" style="margin:14px 0 12px">'+
+      '<input type="number" placeholder="Сумма от '+i.minWithdraw+' ₽" id="wd-amount" inputmode="decimal">'+
+      '<span class="mono" style="color:var(--ink-2)">₽</span></div>';
+    html+='<p class="fee-note">Дневной лимит '+i.dayLimit.toLocaleString('ru')+' ₽ · сегодня выведено '+i.usedToday.toLocaleString('ru')+' ₽</p>';
+    html+='<button class="btn" onclick="doWithdraw()">Отправить заявку</button>';
+  }
+
+  document.getElementById('wd-body').innerHTML=html;
+}
+function pickCard(k){wdCard=k;renderWithdraw()}
+async function doWithdraw(){
+  const v=parseFloat(document.getElementById('wd-amount').value)||0;
+  if(!wdCard){toast('Выберите, куда вывести');return}
+  if(v<wdInfo.minWithdraw){toast('Минимум '+wdInfo.minWithdraw+' ₽');return}
+  try{
+    const r=await api('/api/wallet/withdraw',{amount:v,card:wdCard});
+    closeSheets();
+    await refresh();
+    toast(r.status==='pending'?'Заявка принята, идёт проверка':'Вывод отправлен');
   }catch(e){}
 }
 
 /* ============ БИРЖА ============ */
 function renderMarket(){
   if(!S)return;
-  const used=S.usernames.length,max=3;
+  const used=S.usernames.length, max=S.user.slots||3;
   let dots='';
-  for(let i=0;i<3;i++)dots+='<div class="slot-dot'+(i<used?' full':'')+'"></div>';
-  dots+='<div class="slot-dot prem"></div><div class="slot-dot prem"></div>';
+  for(let i=0;i<max;i++)dots+='<div class="slot-dot'+(i<used?' full':'')+'"></div>';
+  if(!S.user.premium)for(let i=max;i<5;i++)dots+='<div class="slot-dot prem"></div>';
   let html='<div class="slots-card glass-card"><div class="row"><b>Слоты юзернеймов</b>'+
     '<span class="mono" style="font-size:.9rem">'+used+' / '+max+'</span></div>'+
     '<div class="slots-dots">'+dots+'</div>'+
-    '<div class="hint">С премиумом — до 5 слотов <span class="prem-chip">PREMIUM</span></div></div>';
+    '<div class="hint">'+(S.user.premium
+      ? 'Премиум активен <span class="prem-chip">'+max+' СЛОТОВ</span>'
+      : 'С премиумом — до 5 слотов <span class="prem-chip">'+(S.user.premiumPrice||500)+' ₽</span>')+
+    '</div></div>';
   html+=S.usernames.map(u=>{
     const right=u.forSale
       ?'<span class="tag-sale">В ПРОДАЖЕ</span><span class="price mono">'+u.price.toLocaleString('ru')+' ₽</span>'
@@ -1504,7 +1639,13 @@ function renderProfile(){
   document.getElementById('p-devtag').style.display=u.dev?'block':'none';
   document.getElementById('verify-cta').style.display=u.verified?'none':'flex';
   document.getElementById('p-balance').textContent=fmtRub(u.balance);
-  document.getElementById('p-unames').textContent=S.usernames.length+' из 3';
+  document.getElementById('p-unames').textContent=S.usernames.length+' из '+(u.slots||3);
+  const pc=document.getElementById('p-premium');
+  if(u.premium){
+    pc.textContent='ДО '+new Date(u.premiumUntil).toLocaleDateString('ru');
+  }else{
+    pc.textContent=(u.premiumPrice||500)+' ₽ / МЕС';
+  }
   document.getElementById('p-reports').textContent=S.reports;
   document.getElementById('trust-fill').style.width=(u.trust||0)+'%';
   document.getElementById('trust-val').textContent=(u.trust||0)+'%';
@@ -1562,6 +1703,7 @@ async function boot(){
   if(!token){
     show('s-auth');
     loadConfig();
+    document.getElementById('boot-retry').style.display='none';
     /* Если человек ушёл в Telegram и вернулся — продолжаем ждать подтверждения */
     const saved=tgStore.get();
     if(saved&&Date.now()-saved.started<15*60e3){
@@ -1572,10 +1714,46 @@ async function boot(){
     }
     return;
   }
-  try{
-    const r=await api('/api/state');
-    S=r.state;connectWS();go('s-chats');
-  }catch(e){show('s-auth');loadConfig()}
+  /* Токен есть — значит человек уже входил. Ни при каких сетевых сбоях
+     не выкидываем его на регистрацию: сервер на бесплатном тарифе
+     засыпает и просыпается до минуты. */
+  show('s-boot');
+  document.getElementById('boot-retry').style.display='none';
+  const msg=document.getElementById('boot-msg');
+  msg.textContent='Подключаемся…';
+
+  for(let i=0;i<14;i++){
+    if(i===2)msg.textContent='Сервер просыпается, это до минуты…';
+    let res=null;
+    try{
+      res=await fetch(API+'/api/state',{headers:{Authorization:'Bearer '+token}});
+    }catch(e){
+      await new Promise(r=>setTimeout(r,4000));
+      continue;
+    }
+    if(res.status===401){
+      /* Только это означает, что сессия правда недействительна */
+      tokenStore.clear();token=null;S=null;
+      show('s-auth');loadConfig();
+      toast('Сессия истекла — войдите тем же номером');
+      return;
+    }
+    if(res.ok){
+      const r=await res.json().catch(()=>null);
+      if(r&&r.state){
+        S=r.state;connectWS();go('s-chats');
+        try{
+          const p=localStorage.getItem('newchat_pay');
+          if(p){pendingPayment=p;startPayPoll()}
+        }catch(e){}
+        return;
+      }
+    }
+    await new Promise(r=>setTimeout(r,4000));
+  }
+
+  msg.textContent='Сервер не отвечает';
+  document.getElementById('boot-retry').style.display='block';
 }
 boot();
 </script>
