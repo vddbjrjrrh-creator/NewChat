@@ -18,6 +18,10 @@ const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 const DEV_USERNAMES = (process.env.DEV_USERNAMES || 'shadow')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
+/* Ключ от SMS.ru. Если не задан — код показывается на экране (режим разработки). */
+const SMSRU_API_ID = process.env.SMSRU_API_ID || '';
+const SMS_ENABLED = !!SMSRU_API_ID;
+
 /* ================= ХРАНИЛИЩЕ ================= */
 
 let db = {
@@ -56,6 +60,39 @@ function save() {
 
 const uid = () => crypto.randomBytes(9).toString('hex');
 const now = () => Date.now();
+
+/* ================= ОТПРАВКА SMS ================= */
+
+async function sendSMS(phone10, code) {
+  if (!SMS_ENABLED) return { sent: false, reason: 'not_configured' };
+
+  const to = '7' + phone10;
+  const text = `Newchat: код ${code}. Никому его не сообщайте.`;
+  const url = 'https://sms.ru/sms/send?api_id=' + encodeURIComponent(SMSRU_API_ID) +
+    '&to=' + to + '&msg=' + encodeURIComponent(text) + '&json=1';
+
+  try {
+    /* Если сервис не ответил за 10 секунд — не заставляем человека ждать */
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const data = await res.json();
+
+    if (data.status === 'OK') {
+      const info = data.sms && data.sms[to];
+      if (info && info.status === 'OK') {
+        console.log(`SMS отправлено на +${to}`);
+        return { sent: true };
+      }
+      console.error('SMS не доставлено:', info && info.status_text);
+      return { sent: false, reason: (info && info.status_text) || 'Не удалось отправить' };
+    }
+
+    console.error('Ошибка SMS.ru:', data.status_text);
+    return { sent: false, reason: data.status_text || 'Ошибка сервиса SMS' };
+  } catch (e) {
+    console.error('Сбой связи с SMS.ru:', e.message);
+    return { sent: false, reason: 'Сервис SMS недоступен' };
+  }
+}
 
 /* ================= ХЕЛПЕРЫ ================= */
 
@@ -191,14 +228,43 @@ route('POST', '/api/auth/request', async (req, res, body) => {
   const phone = normPhone(body.phone);
   if (phone.length !== 10) return send(res, 400, { error: 'Введите номер из 10 цифр' });
 
+  const prev = db.codes[phone];
+
+  /* Не чаще одного кода в минуту на номер */
+  if (prev && prev.sentAt && now() - prev.sentAt < 60e3) {
+    const wait = Math.ceil((60e3 - (now() - prev.sentAt)) / 1000);
+    return send(res, 429, { error: `Повторный код можно запросить через ${wait} сек.` });
+  }
+
+  /* Не больше 5 кодов на номер в час — защита от перебора и слива денег на SMS */
+  const hourAgo = now() - 3600e3;
+  const recent = (prev && prev.log ? prev.log : []).filter(t => t > hourAgo);
+  if (recent.length >= 5) {
+    return send(res, 429, { error: 'Слишком много запросов. Попробуйте через час.' });
+  }
+
   const code = String(Math.floor(10000 + Math.random() * 90000));
-  db.codes[phone] = { code, expires: now() + 10 * 60 * 1000 };
+  db.codes[phone] = {
+    code,
+    expires: now() + 10 * 60 * 1000,
+    sentAt: now(),
+    attempts: 0,
+    log: recent.concat(now())
+  };
   save();
 
-  console.log(`Код для +7${phone}: ${code}`);
+  if (SMS_ENABLED) {
+    const result = await sendSMS(phone, code);
+    if (!result.sent) {
+      delete db.codes[phone];
+      save();
+      return send(res, 502, { error: result.reason || 'Не удалось отправить SMS' });
+    }
+    return send(res, 200, { ok: true });
+  }
 
-  /* Пока SMS-шлюз не подключён, код возвращается прямо в ответе.
-     Когда подключишь SMS-сервис — отправляй тут и убери devCode. */
+  /* SMS не подключены — показываем код на экране */
+  console.log(`Код для +7${phone}: ${code}`);
   send(res, 200, { ok: true, devCode: code });
 });
 
@@ -208,7 +274,19 @@ route('POST', '/api/auth/verify', async (req, res, body) => {
   const rec = db.codes[phone];
 
   if (!rec || rec.expires < now()) return send(res, 400, { error: 'Код истёк, запросите новый' });
-  if (rec.code !== code) return send(res, 400, { error: 'Неверный код' });
+
+  /* Не больше 5 попыток ввода — иначе код можно подобрать перебором */
+  rec.attempts = (rec.attempts || 0) + 1;
+  if (rec.attempts > 5) {
+    delete db.codes[phone];
+    save();
+    return send(res, 429, { error: 'Слишком много попыток. Запросите новый код.' });
+  }
+
+  if (rec.code !== code) {
+    save();
+    return send(res, 400, { error: 'Неверный код' });
+  }
 
   delete db.codes[phone];
 

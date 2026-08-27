@@ -507,6 +507,7 @@ body{
         SMS ещё не подключены. Ваш код: <b class="mono" id="dev-code-value"></b>
       </div>
       <button class="btn" onclick="codeNext()">Подтвердить</button>
+      <button class="btn ghost" id="resend-btn" onclick="resendCode()">Отправить код заново</button>
       <button class="btn ghost" onclick="show('s-auth')">Изменить номер</button>
     </div>
   </div>
@@ -990,10 +991,14 @@ async function authNext(){
     document.getElementById('code-phone').textContent=
       '+7 '+p.slice(0,3)+' '+p.slice(3,6)+'-'+p.slice(6,8)+'-'+p.slice(8,10);
     show('s-code');
+    document.getElementById('auth-code').value='';
     if(r.devCode){
       document.getElementById('dev-code-hint').style.display='block';
       document.getElementById('dev-code-value').textContent=r.devCode;
+    }else{
+      document.getElementById('dev-code-hint').style.display='none';
     }
+    startResendTimer();
   }catch(e){}
 }
 async function codeNext(){
@@ -1017,6 +1022,35 @@ async function finishSetup(){
   try{
     const r=await api('/api/profile/setup',{name,username});
     S=r.state;connectWS();go('s-chats');
+  }catch(e){}
+}
+let resendTimer=null;
+function startResendTimer(){
+  const btn=document.getElementById('resend-btn');
+  let left=60;
+  clearInterval(resendTimer);
+  btn.disabled=true;
+  btn.textContent='Отправить код заново (60)';
+  resendTimer=setInterval(()=>{
+    left--;
+    if(left<=0){
+      clearInterval(resendTimer);
+      btn.disabled=false;
+      btn.textContent='Отправить код заново';
+    }else{
+      btn.textContent='Отправить код заново ('+left+')';
+    }
+  },1000);
+}
+async function resendCode(){
+  try{
+    const r=await api('/api/auth/request',{phone:pendingPhone});
+    if(r.devCode){
+      document.getElementById('dev-code-hint').style.display='block';
+      document.getElementById('dev-code-value').textContent=r.devCode;
+    }
+    startResendTimer();
+    toast('Код отправлен заново');
   }catch(e){}
 }
 function logout(silent){
