@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Newchat</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#6C5CE7">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Newchat">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<link rel="icon" href="./icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -476,6 +484,10 @@ body{
         <input type="tel" placeholder="900 000-00-00" id="auth-phone" maxlength="15" inputmode="tel">
       </div>
       <div class="field-err" id="auth-err">Введите номер телефона</div>
+      <div class="law-note" id="no-server" style="display:none;margin-bottom:12px">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        Сервер не подключён. Впишите его адрес в переменную SERVER в файле index.html.
+      </div>
       <button class="btn" onclick="authNext()">Продолжить</button>
       <p class="auth-note">Продолжая, вы соглашаетесь с правилами.<br>Жалобы «Докс» и «Скам» передаются в полицию.</p>
     </div>
@@ -490,6 +502,10 @@ body{
         <input type="tel" placeholder="• • • • •" id="auth-code" maxlength="5" inputmode="numeric" style="text-align:center;letter-spacing:.4em;font-size:1.2rem">
       </div>
       <div class="field-err" id="code-err">Введите 5 цифр кода</div>
+      <div class="law-note" id="dev-code-hint" style="display:none;margin-bottom:12px">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        SMS ещё не подключены. Ваш код: <b class="mono" id="dev-code-value"></b>
+      </div>
       <button class="btn" onclick="codeNext()">Подтвердить</button>
       <button class="btn ghost" onclick="show('s-auth')">Изменить номер</button>
     </div>
@@ -853,7 +869,13 @@ body{
 </div>
 
 <script>
-/* ============ ДАННЫЕ ============ */
+/* ============ НАСТРОЙКА ============ */
+/* Адрес сервера. Если сервер переедет — поменяй строку ниже. */
+const SERVER = 'https://newchat-server1.onrender.com';
+
+const API = SERVER.replace(/\/$/, '');
+const WS_URL = API.replace(/^http/, 'ws') + '/ws';
+
 const RATES={rub:1,usd:91,aed:24.8};
 const SIGNS={rub:'₽',usd:'$',aed:'AED'};
 const COVERS=[
@@ -879,23 +901,52 @@ const CHAT_COLORS=[
   'linear-gradient(135deg,#F0719F,#D93A78)'
 ];
 
-/* Безопасное хранилище: работает на GitHub Pages, не падает в песочницах */
-const store={
-  get(){try{return JSON.parse(localStorage.getItem('newchat')||'null')}catch(e){return window.__mem||null}},
-  set(v){try{localStorage.setItem('newchat',JSON.stringify(v))}catch(e){window.__mem=v}},
-  clear(){try{localStorage.removeItem('newchat')}catch(e){window.__mem=null}}
+/* Токен храним локально, всё остальное живёт на сервере */
+const tokenStore={
+  get(){try{return localStorage.getItem('newchat_token')}catch(e){return window.__tok||null}},
+  set(v){try{localStorage.setItem('newchat_token',v)}catch(e){window.__tok=v}},
+  clear(){try{localStorage.removeItem('newchat_token')}catch(e){window.__tok=null}}
 };
 
-let S=store.get();      // состояние приложения
-let currentChat=null;   // id открытого чата
+let token=tokenStore.get();
+let S=null;             // состояние с сервера
+let currentChat=null;
 let cur='rub';
 let vtype='company';
 let pendingPhone='';
+let ws=null;
+let sellUname='';
 
-function save(){store.set(S)}
-function fmtRub(n){return n.toLocaleString('ru')+' ₽'}
-function now(){return new Date().toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function fmtRub(n){return (n||0).toLocaleString('ru')+' ₽'}
+function fmtTime(ts){return new Date(ts).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
+function colorFor(str){
+  let h=0;for(let i=0;i<str.length;i++)h=(h*31+str.charCodeAt(i))%CHAT_COLORS.length;
+  return CHAT_COLORS[h];
+}
+
+/* ============ ЗАПРОСЫ К СЕРВЕРУ ============ */
+async function api(path,body){
+  if(!API){
+    toast('Сервер не подключён — впишите адрес в index.html');
+    throw new Error('no server');
+  }
+  let res;
+  try{
+    res=await fetch(API+path,{
+      method:body?'POST':'GET',
+      headers:Object.assign({'Content-Type':'application/json'},token?{Authorization:'Bearer '+token}:{}),
+      body:body?JSON.stringify(body):undefined
+    });
+  }catch(e){
+    toast('Нет связи с сервером');
+    throw e;
+  }
+  const data=await res.json().catch(()=>({}));
+  if(res.status===401){logout(true);throw new Error('unauthorized')}
+  if(!res.ok){toast(data.error||'Ошибка сервера');throw new Error(data.error||'error')}
+  return data;
+}
 
 /* ============ НАВИГАЦИЯ ============ */
 function show(id){
@@ -913,8 +964,7 @@ function go(id){
 }
 function openSheet(id){
   const sheet=document.getElementById(id);
-  const screen=sheet.closest('.screen');
-  screen.querySelector('.sheet-veil').classList.add('show');
+  sheet.closest('.screen').querySelector('.sheet-veil').classList.add('show');
   document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('show'));
   sheet.classList.add('show');
 }
@@ -925,143 +975,199 @@ function closeSheets(){
 function toast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg;t.classList.add('show');
-  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2300);
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2600);
 }
 
-/* ============ ОНБОРДИНГ ============ */
-function authNext(){
+/* ============ ВХОД ============ */
+async function authNext(){
   const p=document.getElementById('auth-phone').value.replace(/\D/g,'');
   const err=document.getElementById('auth-err');
-  if(p.length<10){err.style.display='block';return}
+  if(p.length<10){err.textContent='Введите номер из 10 цифр';err.style.display='block';return}
   err.style.display='none';
-  pendingPhone='+7 '+p.slice(0,3)+' '+p.slice(3,6)+'-'+p.slice(6,8)+'-'+p.slice(8,10);
-  document.getElementById('code-phone').textContent=pendingPhone;
-  show('s-code');
+  pendingPhone=p;
+  try{
+    const r=await api('/api/auth/request',{phone:p});
+    document.getElementById('code-phone').textContent=
+      '+7 '+p.slice(0,3)+' '+p.slice(3,6)+'-'+p.slice(6,8)+'-'+p.slice(8,10);
+    show('s-code');
+    if(r.devCode){
+      document.getElementById('dev-code-hint').style.display='block';
+      document.getElementById('dev-code-value').textContent=r.devCode;
+    }
+  }catch(e){}
 }
-function codeNext(){
+async function codeNext(){
   const c=document.getElementById('auth-code').value.replace(/\D/g,'');
   const err=document.getElementById('code-err');
-  if(c.length<5){err.style.display='block';return}
+  if(c.length<5){err.textContent='Введите 5 цифр кода';err.style.display='block';return}
   err.style.display='none';
-  show('s-setup');
+  try{
+    const r=await api('/api/auth/verify',{phone:pendingPhone,code:c});
+    token=r.token;tokenStore.set(token);
+    if(r.needsSetup){show('s-setup')}
+    else{S=r.state;connectWS();go('s-chats')}
+  }catch(e){}
 }
-function finishSetup(){
+async function finishSetup(){
   const name=document.getElementById('setup-name').value.trim();
-  const uname=document.getElementById('setup-uname').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+  const username=document.getElementById('setup-uname').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
   const err=document.getElementById('setup-err');
-  if(!name||uname.length<3){err.style.display='block';return}
+  if(!name||username.length<3){err.textContent='Заполните имя и юзернейм (от 3 символов)';err.style.display='block';return}
   err.style.display='none';
-  S={
-    user:{name,phone:pendingPhone,cover:0,ava:0,status:'',verified:false,dev:false},
-    usernames:[{u:uname,main:true,forSale:false,price:0}],
-    chats:[],
-    balance:0,
-    history:[],
-    reports:0,
-    trust:100
-  };
-  // Сервисный чат Newchat — как официальный чат Telegram
-  S.chats.push({
-    id:'svc',
-    name:'Newchat',
-    uname:'newchat',
-    verified:true,
-    service:true,
-    color:'linear-gradient(135deg,#9788EA,#5B4BD4)',
-    msgs:[{out:false,text:'Добро пожаловать в Newchat, '+name+'! Здесь будут уведомления о жалобах, покупках и безопасности аккаунта.',time:now()}]
-  });
-  save();
-  boot();
+  try{
+    const r=await api('/api/profile/setup',{name,username});
+    S=r.state;connectWS();go('s-chats');
+  }catch(e){}
 }
-function logout(){
-  if(!confirm('Выйти из аккаунта? Локальные данные будут удалены.'))return;
-  store.clear();S=null;
-  location.reload?location.reload():show('s-auth');
+function logout(silent){
+  if(!silent&&!confirm('Выйти из аккаунта?'))return;
+  tokenStore.clear();token=null;S=null;
+  if(ws){try{ws.close()}catch(e){}ws=null}
+  show('s-auth');
+  if(silent)toast('Нужно войти заново');
+}
+
+/* ============ WEBSOCKET ============ */
+function connectWS(){
+  if(!API||!token)return;
+  if(ws){try{ws.close()}catch(e){}}
+  ws=new WebSocket(WS_URL+'?token='+encodeURIComponent(token));
+  ws.onmessage=async ev=>{
+    let d;try{d=JSON.parse(ev.data)}catch(e){return}
+    if(d.type==='message'){
+      const chat=S.chats.find(c=>c.id===d.chatId);
+      if(chat){
+        chat.msgs.push(d.message);
+        if(currentChat===d.chatId)renderMsgs(chat);
+      }else{
+        await refresh();
+      }
+      if(currentChat!==d.chatId)renderChats();
+    }
+    if(d.type==='deleted'){
+      const chat=S.chats.find(c=>c.id===d.chatId);
+      const m=chat&&chat.msgs.find(x=>x.id===d.messageId);
+      if(m){m.deleted=true;if(currentChat===d.chatId)renderMsgs(chat)}
+    }
+    if(d.type==='chats'||d.type==='state'){await refresh()}
+  };
+  ws.onclose=()=>{if(token)setTimeout(connectWS,4000)};
+  ws.onerror=()=>{};
+}
+async function refresh(){
+  try{
+    const r=await api('/api/state');
+    S=r.state;
+    const active=document.querySelector('.screen.active');
+    if(active){
+      if(active.id==='s-chats')renderChats();
+      if(active.id==='s-wallet')renderWallet();
+      if(active.id==='s-market')renderMarket();
+      if(active.id==='s-profile')renderProfile();
+      if(active.id==='s-chat'){
+        const c=S.chats.find(x=>x.id===currentChat);
+        if(c)renderMsgs(c);
+      }
+    }
+  }catch(e){}
 }
 
 /* ============ ЧАТЫ ============ */
 function renderChats(){
   const list=document.getElementById('chat-list');
-  if(!S.chats.length){
-    list.innerHTML='<div class="empty"><div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg></div><b>Пока нет чатов</b><p>Нажмите на карандаш, чтобы начать первую переписку.</p></div>';
+  if(!S||!S.chats.length){
+    list.innerHTML='<div class="empty"><div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg></div><b>Пока нет чатов</b><p>Нажмите на карандаш и введите юзернейм друга, чтобы начать переписку.</p></div>';
     return;
   }
   list.innerHTML=S.chats.map(c=>{
     const last=c.msgs[c.msgs.length-1];
-    const check=c.verified?'<span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
+    const peer=c.peer||{name:'?',username:''};
+    const check=peer.verified?'<span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
+    const color=c.service?'linear-gradient(135deg,#9788EA,#5B4BD4)':colorFor(peer.username||peer.name);
+    const prev=last?(last.deleted?'Сообщение удалено':esc(last.text).slice(0,60)):'';
     return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+
-      '<div class="ava" style="background:'+c.color+'">'+esc(c.name[0].toUpperCase())+'</div>'+
-      '<div class="mid"><div class="name">'+esc(c.name)+' '+check+'</div>'+
-      '<div class="prev">'+(last?esc(last.text).slice(0,60):'')+'</div></div>'+
-      '<div class="end"><span class="time">'+(last?last.time:'')+'</span></div></div>';
+      '<div class="ava" style="background:'+color+'">'+esc((peer.name||'?')[0].toUpperCase())+'</div>'+
+      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+'</div>'+
+      '<div class="prev">'+prev+'</div></div>'+
+      '<div class="end"><span class="time">'+(last?fmtTime(last.time):'')+'</span></div></div>';
   }).join('');
 }
-function createChat(){
+async function createChat(){
   const inp=document.getElementById('nc-uname');
   const u=inp.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
   if(u.length<3){toast('Юзернейм — минимум 3 символа');return}
-  if(u===S.usernames[0].u){toast('Это ваш собственный юзернейм');return}
-  let chat=S.chats.find(c=>c.uname===u);
-  if(!chat){
-    chat={
-      id:'c'+Date.now(),
-      name:'@'+u,
-      uname:u,
-      verified:false,
-      service:false,
-      color:CHAT_COLORS[S.chats.length%CHAT_COLORS.length],
-      msgs:[]
-    };
-    S.chats.unshift(chat);
-    save();
-  }
-  inp.value='';
-  closeSheets();
-  openChat(chat.id);
+  try{
+    const r=await api('/api/chats/create',{username:u});
+    inp.value='';closeSheets();
+    await refresh();
+    openChat(r.chatId);
+  }catch(e){}
 }
 function openChat(id){
   currentChat=id;
   const c=S.chats.find(x=>x.id===id);
+  if(!c)return;
+  const peer=c.peer||{name:'?',username:''};
+  const color=c.service?'linear-gradient(135deg,#9788EA,#5B4BD4)':colorFor(peer.username||peer.name);
   show('s-chat');
-  document.getElementById('chat-ava').style.background=c.color;
-  document.getElementById('chat-ava').textContent=c.name[0].toUpperCase();
-  document.getElementById('chat-name').innerHTML=esc(c.name)+(c.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'');
-  document.getElementById('chat-sub').textContent=c.service?'официальный аккаунт':'@'+c.uname;
+  const av=document.getElementById('chat-ava');
+  av.style.background=color;av.textContent=(peer.name||'?')[0].toUpperCase();
+  document.getElementById('chat-name').innerHTML=esc(peer.name)+
+    (peer.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'');
+  document.getElementById('chat-sub').textContent=c.service?'официальный аккаунт':'@'+peer.username;
   document.getElementById('chat-menu-btn').style.display=c.service?'none':'flex';
+  document.querySelector('#s-chat .composer').style.display=c.service?'none':'flex';
   renderMsgs(c);
 }
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
   if(!c.msgs.length){
-    box.innerHTML='<div class="empty"><b>Нет сообщений</b><p>Напишите первым — сообщение появится здесь.</p></div>';
+    box.innerHTML='<div class="empty"><b>Нет сообщений</b><p>Напишите первым — собеседник получит его сразу.</p></div>';
     return;
   }
-  box.innerHTML=c.msgs.map(m=>
-    '<div class="msg '+(m.out?'out':'in')+'">'+esc(m.text)+
-    '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+m.time+'</span></div>'
-  ).join('');
+  box.innerHTML=c.msgs.map(m=>{
+    if(m.deleted&&!m.out)return '<div class="msg deleted">Сообщение удалено отправителем · копия сохранена для жалоб</div>';
+    const del=m.out&&!m.deleted?' ondblclick="deleteMsg(\''+m.id+'\')"':'';
+    return '<div class="msg '+(m.out?'out':'in')+'"'+del+'>'+
+      (m.deleted?'<i style="opacity:.7">удалено</i>':esc(m.text))+
+      '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+fmtTime(m.time)+'</span></div>';
+  }).join('');
   box.scrollTop=box.scrollHeight;
 }
-function sendMsg(){
+async function sendMsg(){
   const inp=document.getElementById('composer-input');
   const text=inp.value.trim();
   if(!text||!currentChat)return;
-  const c=S.chats.find(x=>x.id===currentChat);
-  c.msgs.push({out:true,text,time:now()});
-  save();
-  renderMsgs(c);
   inp.value='';
+  try{
+    const r=await api('/api/messages/send',{chatId:currentChat,text});
+    const c=S.chats.find(x=>x.id===currentChat);
+    c.msgs.push(r.message);
+    renderMsgs(c);
+  }catch(e){inp.value=text}
+}
+async function deleteMsg(id){
+  if(!confirm('Удалить сообщение? Копия останется для жалоб.'))return;
+  try{
+    await api('/api/messages/delete',{chatId:currentChat,messageId:id});
+    const c=S.chats.find(x=>x.id===currentChat);
+    const m=c.msgs.find(x=>x.id===id);
+    if(m)m.deleted=true;
+    renderMsgs(c);
+  }catch(e){}
 }
 document.getElementById('composer-input').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg()});
 
 /* ============ ЖАЛОБЫ ============ */
+let reportKind='скам';
 function startReport(kind){
+  reportKind=kind;
   const c=S.chats.find(x=>x.id===currentChat);
   document.getElementById('report-kind').textContent=kind;
-  document.getElementById('report-target').textContent=c.name;
+  document.getElementById('report-target').textContent=c.peer.name;
   openSheet('sheet-confirm');
 }
-function submitReport(){
+async function submitReport(){
   openSheet('sheet-sent');
   const bar=document.getElementById('pbar');
   bar.style.width='0';
@@ -1070,30 +1176,24 @@ function submitReport(){
     const el=document.getElementById(id);
     el.classList.remove('done');
     el.textContent='○ '+el.textContent.slice(2);
-    setTimeout(()=>{
-      el.textContent='✓ '+el.textContent.slice(2);
-      el.classList.add('done');
-    },500+i*550);
+    setTimeout(()=>{el.textContent='✓ '+el.textContent.slice(2);el.classList.add('done')},500+i*550);
   });
-  setTimeout(()=>{
-    S.reports++;
-    const c=S.chats.find(x=>x.id===currentChat);
-    const svc=S.chats.find(x=>x.id==='svc');
-    const num=4000+S.reports;
-    if(svc)svc.msgs.push({out:false,text:'Жалоба №'+num+' на '+c.name+' принята и передана в полицию. Статус можно отслеживать здесь.',time:now()});
-    save();
-    toast('Жалоба №'+num+' передана в полицию');
-  },2300);
+  try{
+    const r=await api('/api/reports/create',{chatId:currentChat,kind:reportKind});
+    setTimeout(()=>{toast('Жалоба №'+r.num+' передана в полицию');refresh()},2300);
+  }catch(e){setTimeout(closeSheets,1200)}
 }
 
 /* ============ КОШЕЛЁК ============ */
 function renderWallet(){
-  document.getElementById('balance').textContent=fmtRub(S.balance);
+  if(!S)return;
+  document.getElementById('balance').textContent=fmtRub(S.user.balance);
   document.getElementById('balance-conv').textContent=
-    '≈ '+(S.balance/RATES.usd).toFixed(1).replace('.',',')+' $ · '+(S.balance/RATES.aed).toFixed(1).replace('.',',')+' AED';
+    '≈ '+(S.user.balance/RATES.usd).toFixed(1).replace('.',',')+' $ · '+
+    (S.user.balance/RATES.aed).toFixed(1).replace('.',',')+' AED';
   const h=document.getElementById('w-history');
   if(!S.history.length){
-    h.innerHTML='<div class="empty" style="padding:40px 40px"><b>Операций пока нет</b><p>Пополните кошелёк — история появится здесь.</p></div>';
+    h.innerHTML='<div class="empty" style="padding:40px"><b>Операций пока нет</b><p>Пополните кошелёк — история появится здесь.</p></div>';
     return;
   }
   h.innerHTML=S.history.map(op=>{
@@ -1119,92 +1219,105 @@ function updConv(){
     'На баланс поступит: <b class="mono">'+rub.toLocaleString('ru')+' ₽</b>'+
     (cur!=='rub'&&v?'<br><span style="font-size:.72rem">курс: 1 '+SIGNS[cur]+' = '+RATES[cur]+' ₽</span>':'');
 }
-function doTopup(){
+async function doTopup(){
   const v=parseFloat(document.getElementById('topup-amount').value)||0;
   if(v<=0){toast('Введите сумму');return}
-  const rub=Math.round(v*RATES[cur]);
-  S.balance+=rub;
-  S.history.unshift({amt:rub,title:'Пополнение · '+SIGNS[cur],sub:cur==='rub'?'с карты':v+' '+SIGNS[cur]+' → конвертация в рубли'});
-  save();
-  document.getElementById('topup-amount').value='';
-  updConv();closeSheets();renderWallet();
-  toast('Кошелёк пополнен на '+fmtRub(rub));
+  try{
+    const r=await api('/api/wallet/topup',{amount:v,currency:cur});
+    S.user.balance=r.balance;S.history=r.history;
+    document.getElementById('topup-amount').value='';
+    updConv();closeSheets();renderWallet();
+    toast('Кошелёк пополнен');
+  }catch(e){}
 }
-function fmtCard(el){
-  el.value=el.value.replace(/\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim();
-}
+function fmtCard(el){el.value=el.value.replace(/\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim()}
 function updWd(){
   const v=parseFloat(document.getElementById('wd-amount').value)||0;
-  const out=Math.max(0,Math.round(v*0.99));
-  document.getElementById('wd-preview').innerHTML='Придёт на карту: <b class="mono">'+out.toLocaleString('ru')+' ₽</b>';
+  document.getElementById('wd-preview').innerHTML=
+    'Придёт на карту: <b class="mono">'+Math.max(0,Math.round(v*0.99)).toLocaleString('ru')+' ₽</b>';
 }
-function doWithdraw(){
+async function doWithdraw(){
   const card=document.getElementById('wd-card').value.replace(/\s/g,'');
   const v=parseFloat(document.getElementById('wd-amount').value)||0;
-  if(card.length<16){toast('Введите номер карты полностью');return}
-  if(v<100){toast('Минимальная сумма — 100 ₽');return}
-  if(v>S.balance){toast('Недостаточно средств');return}
-  S.balance-=v;
-  S.history.unshift({amt:-v,title:'Вывод на карту •• '+card.slice(-4),sub:'комиссия 1%'});
-  save();
-  document.getElementById('wd-amount').value='';updWd();
-  closeSheets();renderWallet();
-  toast('Вывод '+fmtRub(v)+' на карту •• '+card.slice(-4));
+  try{
+    const r=await api('/api/wallet/withdraw',{card,amount:v});
+    S.user.balance=r.balance;S.history=r.history;
+    document.getElementById('wd-amount').value='';updWd();
+    closeSheets();renderWallet();
+    toast('Вывод '+fmtRub(v)+' на карту •• '+r.last4);
+  }catch(e){}
 }
 
 /* ============ БИРЖА ============ */
 function renderMarket(){
-  const box=document.getElementById('market-my');
-  const max=3;
-  const used=S.usernames.length;
+  if(!S)return;
+  const used=S.usernames.length,max=3;
   let dots='';
   for(let i=0;i<3;i++)dots+='<div class="slot-dot'+(i<used?' full':'')+'"></div>';
   dots+='<div class="slot-dot prem"></div><div class="slot-dot prem"></div>';
-  let html=
-    '<div class="slots-card glass-card"><div class="row"><b>Слоты юзернеймов</b>'+
+  let html='<div class="slots-card glass-card"><div class="row"><b>Слоты юзернеймов</b>'+
     '<span class="mono" style="font-size:.9rem">'+used+' / '+max+'</span></div>'+
     '<div class="slots-dots">'+dots+'</div>'+
     '<div class="hint">С премиумом — до 5 слотов <span class="prem-chip">PREMIUM</span></div></div>';
-  html+=S.usernames.map((u,i)=>{
+  html+=S.usernames.map(u=>{
     const right=u.forSale
       ?'<span class="tag-sale">В ПРОДАЖЕ</span><span class="price mono">'+u.price.toLocaleString('ru')+' ₽</span>'
-      :'<button class="pill-btn sell" onclick="openSell('+i+')">Продать</button>';
+      :(u.main?'<span class="val" style="font-size:.74rem;color:var(--ink-2)">основной</span>'
+             :'<button class="pill-btn sell" onclick="openSell(\''+u.u+'\')">Продать</button>');
     return '<div class="uname-card glass-card"><div class="u">'+
       '<div class="h mono">@'+esc(u.u)+'</div>'+
       '<div class="p">'+(u.main?'Основной юзернейм':'Дополнительный')+'</div></div>'+right+'</div>';
   }).join('');
   if(used<max){
-    html+='<div class="uname-card glass-card" style="justify-content:center;color:var(--ink-2);cursor:pointer;border-style:dashed" onclick="openSheet(\'sheet-claim\')">+ Занять юзернейм ('+(max-used)+' '+(max-used===1?'слот свободен':'слота свободно')+')</div>';
+    html+='<div class="uname-card glass-card" style="justify-content:center;color:var(--ink-2);cursor:pointer;border-style:dashed" onclick="openSheet(\'sheet-claim\')">+ Занять юзернейм ('+(max-used)+' своб.)</div>';
   }
-  box.innerHTML=html;
+  document.getElementById('market-my').innerHTML=html;
+
+  const all=document.getElementById('market-all');
+  if(!S.market.length){
+    all.innerHTML='<div class="empty"><div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg></div><b>Лотов пока нет</b><p>Когда пользователи выставят юзернеймы на продажу, они появятся здесь.</p></div>';
+  }else{
+    all.innerHTML=S.market.map(l=>
+      '<div class="uname-card glass-card" style="margin-top:12px"><div class="u">'+
+      '<div class="h mono">@'+esc(l.u)+'</div>'+
+      '<div class="p">Продавец: '+esc(l.seller?l.seller.name:'—')+'</div></div>'+
+      '<span class="price mono">'+l.price.toLocaleString('ru')+' ₽</span>'+
+      '<button class="pill-btn buy" onclick="buyUname(\''+l.u+'\')">Купить</button></div>'
+    ).join('');
+  }
 }
-let sellIndex=0;
-function openSell(i){
-  sellIndex=i;
-  document.getElementById('sell-uname').textContent='@'+S.usernames[i].u;
+function openSell(u){
+  sellUname=u;
+  document.getElementById('sell-uname').textContent='@'+u;
   openSheet('sheet-sell');
 }
-function doSell(){
+async function doSell(){
   const p=parseFloat(document.getElementById('sell-price').value)||0;
-  if(p<=0){toast('Укажите цену');return}
-  S.usernames[sellIndex].forSale=true;
-  S.usernames[sellIndex].price=Math.round(p);
-  save();
-  document.getElementById('sell-price').value='';
-  closeSheets();renderMarket();
-  toast('@'+S.usernames[sellIndex].u+' выставлен на продажу');
+  try{
+    const r=await api('/api/usernames/sell',{username:sellUname,price:p});
+    S.usernames=r.usernames;
+    document.getElementById('sell-price').value='';
+    closeSheets();renderMarket();
+    toast('@'+sellUname+' выставлен на продажу');
+  }catch(e){}
 }
-function doClaim(){
+async function doClaim(){
   const inp=document.getElementById('claim-uname');
   const u=inp.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
-  if(u.length<3){toast('Минимум 3 символа');return}
-  if(S.usernames.some(x=>x.u===u)){toast('Этот юзернейм уже у вас');return}
-  if(S.usernames.length>=3){toast('Все слоты заняты');return}
-  S.usernames.push({u,main:false,forSale:false,price:0});
-  save();
-  inp.value='';
-  closeSheets();renderMarket();
-  toast('@'+u+' занят');
+  try{
+    const r=await api('/api/usernames/claim',{username:u});
+    S.usernames=r.usernames;
+    inp.value='';closeSheets();renderMarket();
+    toast('@'+u+' занят');
+  }catch(e){}
+}
+async function buyUname(u){
+  if(!confirm('Купить @'+u+'?'))return;
+  try{
+    const r=await api('/api/usernames/buy',{username:u});
+    S=r.state;renderMarket();
+    toast('@'+u+' теперь ваш');
+  }catch(e){}
 }
 function marketTab(which){
   ['my','all'].forEach(t=>{
@@ -1215,21 +1328,23 @@ function marketTab(which){
 
 /* ============ ПРОФИЛЬ ============ */
 function renderProfile(){
+  if(!S)return;
   const u=S.user;
-  document.getElementById('p-cover').style.background=COVERS[u.cover];
-  document.getElementById('p-ava').style.background=AVAS[u.ava];
-  document.getElementById('p-initial').textContent=u.name[0].toUpperCase();
-  document.getElementById('p-status').textContent=u.status;
+  document.getElementById('p-cover').style.background=COVERS[u.cover||0];
+  document.getElementById('p-ava').style.background=AVAS[u.ava||0];
+  document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();
+  document.getElementById('p-status').textContent=u.status||'';
   document.getElementById('p-name').textContent=u.name;
-  document.getElementById('p-handle').textContent='@'+S.usernames[0].u+' · '+u.phone.replace(/\d{3}-\d{2}-(\d{2})$/,'•••-••-$1');
+  const ph=u.phone?('+7 '+u.phone.slice(0,3)+' •••-••-'+u.phone.slice(-2)):'';
+  document.getElementById('p-handle').textContent='@'+u.username+' · '+ph;
   document.getElementById('p-vcheck').style.display=u.verified?'inline-flex':'none';
   document.getElementById('p-devtag').style.display=u.dev?'block':'none';
   document.getElementById('verify-cta').style.display=u.verified?'none':'flex';
-  document.getElementById('p-balance').textContent=fmtRub(S.balance);
+  document.getElementById('p-balance').textContent=fmtRub(u.balance);
   document.getElementById('p-unames').textContent=S.usernames.length+' из 3';
   document.getElementById('p-reports').textContent=S.reports;
-  document.getElementById('trust-fill').style.width=S.trust+'%';
-  document.getElementById('trust-val').textContent=S.trust+'%';
+  document.getElementById('trust-fill').style.width=(u.trust||0)+'%';
+  document.getElementById('trust-val').textContent=(u.trust||0)+'%';
   renderDeco();
 }
 function renderDeco(){
@@ -1240,21 +1355,21 @@ function renderDeco(){
   document.getElementById('emoji-row').innerHTML=EMOJIS.map(e=>
     '<div class="emoji-opt'+(S.user.status===e?' on':'')+'" onclick="setStatus(\''+e+'\')">'+(e||'✕')+'</div>').join('');
 }
-function setCover(i){S.user.cover=i;save();renderProfile()}
-function setAvaC(i){S.user.ava=i;save();renderProfile()}
-function setStatus(e){S.user.status=e;save();renderProfile()}
+function setCover(i){S.user.cover=i;renderProfile();api('/api/profile/update',{cover:i}).catch(()=>{})}
+function setAvaC(i){S.user.ava=i;renderProfile();api('/api/profile/update',{ava:i}).catch(()=>{})}
+function setStatus(e){S.user.status=e;renderProfile();api('/api/profile/update',{status:e}).catch(()=>{})}
 function setVType(t){
   vtype=t;
   ['company','public','dev'].forEach(x=>document.getElementById('vt-'+x).classList.toggle('on',x===t));
 }
-function submitVerify(){
+async function submitVerify(){
   const name=document.getElementById('v-name').value.trim();
-  if(!name){toast('Укажите название или имя');return}
-  closeSheets();
-  const svc=S.chats.find(x=>x.id==='svc');
-  const labels={company:'компании',public:'известной личности',dev:'разработчика'};
-  if(svc){svc.msgs.push({out:false,text:'Заявка на верификацию '+labels[vtype]+' («'+name+'») принята. Команда рассмотрит её вручную.',time:now()});save()}
-  toast('Заявка на верификацию отправлена');
+  const proof=document.getElementById('v-proof').value.trim();
+  try{
+    await api('/api/verify/request',{name,proof,kind:vtype});
+    closeSheets();refresh();
+    toast('Заявка на верификацию отправлена');
+  }catch(e){}
 }
 
 /* ============ QR ============ */
@@ -1269,10 +1384,23 @@ function submitVerify(){
   }
 })();
 
+/* ============ PWA ============ */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{navigator.serviceWorker.register('./sw.js').catch(()=>{})});
+}
+
 /* ============ СТАРТ ============ */
-function boot(){
-  if(S&&S.user){go('s-chats')}
-  else{show('s-auth')}
+async function boot(){
+  if(!API){
+    show('s-auth');
+    document.getElementById('no-server').style.display='block';
+    return;
+  }
+  if(!token){show('s-auth');return}
+  try{
+    const r=await api('/api/state');
+    S=r.state;connectWS();go('s-chats');
+  }catch(e){show('s-auth')}
 }
 boot();
 </script>
