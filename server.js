@@ -162,6 +162,7 @@ process.on('SIGINT', shutdown);
 
 const uid = () => crypto.randomBytes(9).toString('hex');
 const now = () => Date.now();
+const sockets = new Map(); // userId -> Set<ws>
 
 /* ================= ОТПРАВКА SMS ================= */
 
@@ -204,13 +205,21 @@ function normPhone(p) {
 function normUsername(u) {
   return String(u || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
 }
+function isOnline(userId) {
+  const set = sockets.get(userId);
+  if (!set) return false;
+  for (const ws of set) if (ws.readyState === 1) return true;
+  return false;
+}
 function publicUser(u) {
   if (!u) return null;
   return {
     id: u.id, name: u.name, username: u.username,
     cover: u.cover, ava: u.ava, status: u.status,
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
-    bot: !!u.isBot,
+    bot: !!u.isBot, anon: !!u.anon,
+    online: u.anon ? undefined : (u.isBot ? true : isOnline(u.id)),
+    lastSeen: u.anon ? 0 : (u.lastSeen || 0),
     verified: !!u.verified, dev: !!u.dev
   };
 }
@@ -242,9 +251,12 @@ function chatView(c, userId) {
     const otherId = c.members.find(m => m !== userId) || c.members[0];
     peer = publicUser(db.users[otherId]);
   }
+  const me = db.users[userId] || {};
   return {
     id: c.id,
     type,
+    muted: !!(me.muted || {})[c.id],
+    blocked: type === 'dm' && peer && peer.id ? !!(me.blocked || {})[peer.id] : false,
     service: !!c.service,
     owner: c.owner || null,
     mine: c.owner === userId,
@@ -276,11 +288,12 @@ function sellerStats(userId) {
   const deals = Object.values(db.deals).filter(d => d.seller === userId && d.status === 'done');
   return { deals: deals.length };
 }
-function marketList(exceptUser) {
+function marketList(forUser) {
   return Object.entries(db.usernames)
-    .filter(([, v]) => v.forSale && !v.frozen && v.owner !== exceptUser)
+    .filter(([, v]) => v.forSale && !v.frozen)
     .map(([u, v]) => ({
       u, price: v.price || 0,
+      mine: v.owner === forUser,
       seller: Object.assign(publicUser(db.users[v.owner]) || {}, {
         trust: (db.users[v.owner] || {}).trust || 0,
         stats: sellerStats(v.owner)
@@ -322,6 +335,7 @@ function fullState(user) {
       premiumUntil: user.premiumUntil || 0,
       slots: slotLimit(user),
       premiumDays: PREMIUM.days,
+      anonMode: !!user.anon,
       invites: user.inviteCount || 0,
       invitesNeeded: PREMIUM.invites,
       requisites: user.requisites || null
@@ -564,8 +578,6 @@ setInterval(() => {
 
 /* ================= WEBSOCKET ================= */
 
-const sockets = new Map(); // userId -> Set<ws>
-
 function push(userId, payload) {
   const set = sockets.get(userId);
   if (!set) return;
@@ -703,7 +715,7 @@ route('POST', '/api/profile/setup', async (req, res, body, user) => {
   const username = normUsername(body.username);
 
   if (!name) return send(res, 400, { error: 'Введите имя' });
-  if (username.length < 3) return send(res, 400, { error: 'Юзернейм — минимум 3 символа' });
+  if (username.length < 5) return send(res, 400, { error: 'Юзернейм — минимум 5 символов' });
   if (db.usernames[username]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
 
   user.name = name;
@@ -768,6 +780,12 @@ route('POST', '/api/chats/create', async (req, res, body, user) => {
     peer = rec && db.users[rec.owner];
   }
   if (!peer || peer.id === user.id) return send(res, 404, { error: 'Пользователь не найден' });
+  const existing0 = Object.values(db.chats).find(c => !c.service && c.type !== 'channel' && c.members.includes(user.id) && c.members.includes(peer.id));
+  if (!existing0) {
+    if (peer.anon && !peer.isBot) return send(res, 404, { error: 'Пользователь не найден' });
+    if ((peer.blocked || {})[user.id]) return send(res, 403, { error: 'Пользователь ограничил переписку' });
+    if ((user.blocked || {})[peer.id]) return send(res, 403, { error: 'Вы заблокировали этого пользователя' });
+  }
 
   const id = chatIdFor(user.id, peer.id);
   if (!db.chats[id]) {
@@ -787,6 +805,12 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   if (chat.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
   if (chat.type === 'channel' && chat.owner !== user.id) {
     return send(res, 403, { error: 'В канале пишет только владелец' });
+  }
+  if (chat.type !== 'channel' && !chat.service) {
+    const pid = chat.members.find(m => m !== user.id);
+    const p = pid && db.users[pid];
+    if (p && (p.blocked || {})[user.id]) return send(res, 403, { error: 'Пользователь ограничил переписку' });
+    if (p && (user.blocked || {})[p.id]) return send(res, 403, { error: 'Вы заблокировали этого пользователя — разблокируйте в меню чата' });
   }
 
   const msg = { id: uid(), from: user.id, text, time: now(), deleted: false };
@@ -1012,6 +1036,34 @@ route('POST', '/api/admin/deals', async (req, res, body) => {
   send(res, 400, { error: 'Неизвестное действие' });
 });
 
+/* ---------- Приватность, блокировки, звук ---------- */
+
+route('POST', '/api/profile/settings', async (req, res, body, user) => {
+  if (typeof body.anon === 'boolean') user.anon = body.anon;
+  save();
+  send(res, 200, { anon: !!user.anon });
+});
+
+route('POST', '/api/users/block', async (req, res, body, user) => {
+  const target = db.users[String(body.userId || '')];
+  if (!target || target.id === user.id) return send(res, 404, { error: 'Пользователь не найден' });
+  user.blocked = user.blocked || {};
+  if (body.on) user.blocked[target.id] = true;
+  else delete user.blocked[target.id];
+  save();
+  send(res, 200, { blocked: !!user.blocked[target.id], chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/mute', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  user.muted = user.muted || {};
+  if (body.on) user.muted[chat.id] = true;
+  else delete user.muted[chat.id];
+  save();
+  send(res, 200, { muted: !!user.muted[chat.id], chats: userChats(user.id) });
+});
+
 /* ---------- Поиск ---------- */
 
 route('POST', '/api/search', async (req, res, body, user) => {
@@ -1022,6 +1074,8 @@ route('POST', '/api/search', async (req, res, body, user) => {
 
   for (const u of Object.values(db.users)) {
     if (u.id === user.id || !u.username) continue;
+    if (u.anon) continue; /* суперанонимность: в поиске не существует */
+    if ((u.blocked || {})[user.id]) continue;
     const hit = u.username.includes(q) || (u.name || '').toLowerCase().includes(q);
     if (hit) results.push({ kind: u.isBot ? 'bot' : 'user', item: publicUser(u) });
     if (results.length >= 15) break;
@@ -1046,6 +1100,7 @@ route('POST', '/api/channels/create', async (req, res, body, user) => {
   const title = String(body.title || '').trim().slice(0, 40);
   const uname = normUsername(body.username);
   if (!title) return send(res, 400, { error: 'Введите название канала' });
+  if (uname && uname.length < 5) return send(res, 400, { error: 'Юзернейм канала — минимум 5 символов' });
   if (uname && db.usernames[uname]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
 
   const mine = Object.values(db.chats).filter(c => c.type === 'channel' && c.owner === user.id);
@@ -1174,7 +1229,7 @@ route('POST', '/api/usernames/claim', async (req, res, body, user) => {
   const mine = myUsernames(user.id);
   const limit = slotLimit(user);
 
-  if (username.length < 3) return send(res, 400, { error: 'Минимум 3 символа' });
+  if (username.length < 5) return send(res, 400, { error: 'Минимум 5 символов' });
   if (db.usernames[username]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
   if (mine.length >= limit) {
     return send(res, 400, {
@@ -1354,6 +1409,7 @@ const server = http.createServer(async (req, res) => {
     const token = (req.headers.authorization || '').replace('Bearer ', '');
     user = userByToken(token);
     if (!user) return send(res, 401, { error: 'Требуется вход' });
+    user.lastSeen = now(); /* «был в сети» обновляется любым запросом */
   }
 
   try {

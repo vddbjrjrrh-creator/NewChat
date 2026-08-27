@@ -474,6 +474,13 @@ body{
   font-size:.83rem;font-weight:600;opacity:0;pointer-events:none;transition:all .25s;
 }
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.ava[data-dot="1"]::after{content:'';position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:#31C48D;border:2.5px solid var(--bg,#EEF0F7)}
+.ava{position:relative}
+.set-row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:16px;margin-top:10px}
+.set-row b{font-size:.92rem}.set-row p{font-size:.74rem;color:var(--ink-2);margin-top:2px}
+.tgl{margin-left:auto;width:46px;height:27px;border-radius:14px;background:#D6D9E6;position:relative;flex:none;transition:.2s;cursor:pointer}
+.tgl::after{content:'';position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.tgl.on{background:var(--accent)}.tgl.on::after{left:22px}
 </style>
 </head>
 <body>
@@ -660,7 +667,7 @@ body{
         <div class="n" id="chat-name"></div>
         <div class="s" id="chat-sub"></div>
       </div>
-      <button class="icon-btn" id="chat-menu-btn" onclick="openSheet('sheet-report')"><svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
+      <button class="icon-btn" id="chat-menu-btn" onclick="openChatMenu()"><svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
     </div>
     <div class="msgs" id="chat-msgs"></div>
     <div class="composer">
@@ -669,6 +676,18 @@ body{
     </div>
 
     <div class="sheet-veil" id="veil-chat" onclick="closeSheets()"></div>
+
+    <div class="sheet" id="sheet-chatmenu">
+      <div class="grip"></div>
+      <h3>Чат</h3>
+      <div id="chatmenu-body"></div>
+    </div>
+
+    <div class="sheet" id="sheet-msg">
+      <div class="grip"></div>
+      <h3>Сообщение</h3>
+      <div id="msgmenu-body"></div>
+    </div>
 
     <div class="sheet" id="sheet-report">
       <div class="grip"></div>
@@ -858,6 +877,22 @@ body{
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M12 7V4M8 12h.01M16 12h.01M9 15.5c1.8 1 4.2 1 6 0"/></svg>
           Мои боты<div class="spacer"></div><span class="val" id="p-bots">0 из 3</span>
         </div>
+
+        <div class="set-row glass-card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="color:var(--accent)"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/><path d="M17 3l4 4M21 3l-4 4"/></svg>
+          <div><b>Суперанонимность</b><p>Вас никто не найдёт — ни по юзернейму, ни по имени. Онлайн скрыт.</p></div>
+          <div class="tgl" id="tgl-anon" onclick="toggleAnon()"></div>
+        </div>
+        <div class="set-row glass-card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="color:var(--accent)"><path d="M18 9a6 6 0 10-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 004 0"/></svg>
+          <div><b>Уведомления</b><p>О новых сообщениях, когда приложение свёрнуто</p></div>
+          <div class="tgl" id="tgl-notif" onclick="toggleNotif()"></div>
+        </div>
+        <div class="set-row glass-card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="color:var(--accent)"><path d="M9 6l5-3v18l-5-3H5V6h4z"/><path d="M17 9a4 4 0 010 6"/></svg>
+          <div><b>Звук</b><p>Короткий сигнал при новом сообщении</p></div>
+          <div class="tgl" id="tgl-sound" onclick="toggleSound()"></div>
+        </div>
         <div class="pitem glass-card" onclick="go('s-market');marketTab('my')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>
           Мои юзернеймы<div class="spacer"></div><span class="val" id="p-unames">1 из 3</span>
@@ -1012,6 +1047,15 @@ function avaHtml(peer,extra){
   const color=p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?'));
   return '<div class="ava" '+extra+' style="background:'+color+'">'+esc((p.name||'?')[0].toUpperCase())+'</div>';
 }
+function fmtSeen(peer){
+  if(peer.online)return 'в сети';
+  if(!peer.lastSeen)return '@'+(peer.username||'');
+  const d=Date.now()-peer.lastSeen;
+  if(d<60e3)return 'был(а) только что';
+  if(d<3600e3)return 'был(а) '+Math.floor(d/60e3)+' мин. назад';
+  if(d<86400e3)return 'был(а) '+Math.floor(d/3600e3)+' ч. назад';
+  return 'был(а) '+new Date(peer.lastSeen).toLocaleDateString('ru');
+}
 function fmtLeft(ms){
   if(ms<=0)return 'меньше минуты';
   const d=Math.floor(ms/86400e3),h=Math.floor(ms%86400e3/3600e3),m=Math.floor(ms%3600e3/60e3);
@@ -1111,7 +1155,7 @@ async function finishSetup(){
   const name=document.getElementById('setup-name').value.trim();
   const username=document.getElementById('setup-uname').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
   const err=document.getElementById('setup-err');
-  if(!name||username.length<3){err.textContent='Заполните имя и юзернейм (от 3 символов)';err.style.display='block';return}
+  if(!name||username.length<5){err.textContent='Заполните имя и юзернейм (от 5 символов)';err.style.display='block';return}
   err.style.display='none';
   try{
     let ref='';try{ref=localStorage.getItem('newchat_ref')||''}catch(e){}
@@ -1295,6 +1339,7 @@ function connectWS(){
         await refresh();
       }
       if(currentChat!==d.chatId)renderChats();
+      notifyMsg(d.chatId,(d.message||{}).text||'Новое сообщение');
     }
     if(d.type==='deleted'){
       const chat=S.chats.find(c=>c.id===d.chatId);
@@ -1336,10 +1381,12 @@ function renderChats(){
     const peer=c.peer||{name:'?',username:''};
     const check=peer.verified?'<span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
     const kind=c.type==='channel'?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">канал</span>':(peer.bot?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">бот</span>':'');
-    const av=c.service?'<div class="ava" style="background:linear-gradient(135deg,#9788EA,#5B4BD4)">N</div>':avaHtml(peer);
+    const av=(c.service?'<div class="ava" style="background:linear-gradient(135deg,#9788EA,#5B4BD4)">N</div>':avaHtml(peer))
+      .replace('<div class="ava"','<div class="ava" data-dot="'+(peer.online&&!c.service&&c.type!=='channel'?'1':'')+'"');
+    const mut=c.muted?' <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="opacity:.45;vertical-align:-2px"><path d="M9 6l5-3v18l-5-3H5V6h4z"/><path d="M2 2l20 20"/></svg>':'';
     const prev=last?(last.deleted?'Сообщение удалено':esc(last.text).slice(0,60)):'';
     return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+av+
-      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+kind+'</div>'+
+      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+kind+mut+'</div>'+
       '<div class="prev">'+prev+'</div></div>'+
       '<div class="end"><span class="time">'+(last?fmtTime(last.time):'')+'</span></div></div>';
   }).join('');
@@ -1367,7 +1414,7 @@ function openChat(id){
   else{av.style.background=peer.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(peer.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(peer.username||peer.name));av.textContent=(peer.name||'?')[0].toUpperCase();}
   document.getElementById('chat-name').innerHTML=esc(peer.name)+
     (peer.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'');
-  let sub=c.service?'официальный аккаунт':'@'+peer.username;
+  let sub=c.service?'официальный аккаунт':fmtSeen(peer);
   if(c.type==='channel')sub=(c.subs||1)+' подписчиков'+(c.mine?' · ваш канал':'');
   if(peer.bot)sub='@'+peer.username+' · бот';
   document.getElementById('chat-sub').textContent=sub;
@@ -1386,6 +1433,35 @@ function openChat(id){
   }
   renderMsgs(c);
 }
+function openChatMenu(){
+  const c=S.chats.find(x=>x.id===currentChat);
+  if(!c)return;
+  const b=document.getElementById('chatmenu-body');
+  b.innerHTML=
+    '<button class="report-opt" onclick="muteChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M9 6l5-3v18l-5-3H5V6h4z"/>'+(c.muted?'':'<path d="M2 2l20 20"/>')+'</svg></span><span><b>'+(c.muted?'Включить звук':'Выключить звук')+'</b><span>Уведомления этого чата</span></span></button>'+
+    '<button class="report-opt" onclick="blockPeer()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg></span><span><b>'+(c.blocked?'Разблокировать':'Заблокировать')+'</b><span>'+(c.blocked?'Снова разрешить переписку':'Собеседник не сможет вам писать')+'</span></span></button>'+
+    '<button class="report-opt" onclick="closeSheets();openSheet(\'sheet-report\')"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v4"/></svg></span><span><b>Пожаловаться</b><span>Докс или скам — уйдёт в полицию</span></span></button>';
+  openSheet('sheet-chatmenu');
+}
+async function muteChat(){
+  const c=S.chats.find(x=>x.id===currentChat);
+  try{
+    const r=await api('/api/chats/mute',{chatId:currentChat,on:!c.muted});
+    S.chats=r.chats;closeSheets();
+    toast(r.muted?'Звук выключен':'Звук включён');
+  }catch(e){}
+}
+async function blockPeer(){
+  const c=S.chats.find(x=>x.id===currentChat);
+  const on=!c.blocked;
+  if(on&&!confirm('Заблокировать '+(c.peer||{}).name+'? Он(а) не сможет вам писать.'))return;
+  try{
+    const r=await api('/api/users/block',{userId:(c.peer||{}).id,on});
+    S.chats=r.chats;closeSheets();
+    toast(on?'Пользователь заблокирован':'Разблокировано');
+    openChat(currentChat);
+  }catch(e){}
+}
 async function leaveChannel(id){
   if(!confirm('Отписаться от канала?'))return;
   try{
@@ -1402,8 +1478,8 @@ function renderMsgs(c){
   }
   box.innerHTML=c.msgs.map(m=>{
     if(m.deleted&&!m.out)return '<div class="msg deleted">Сообщение удалено отправителем · копия сохранена для жалоб</div>';
-    const del=m.out&&!m.deleted?' ondblclick="deleteMsg(\''+m.id+'\')"':'';
-    return '<div class="msg '+(m.out?'out':'in')+'"'+del+'>'+
+    const del=!m.deleted?' onclick="openMsgMenu(\''+m.id+'\')"':'';
+    return '<div class="msg '+(m.out?'out':'in')+'"'+del+' style="cursor:pointer">'+
       (m.deleted?'<i style="opacity:.7">удалено</i>':esc(m.text))+
       '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+fmtTime(m.time)+'</span></div>';
   }).join('');
@@ -1420,6 +1496,18 @@ async function sendMsg(){
     c.msgs.push(r.message);
     renderMsgs(c);
   }catch(e){inp.value=text}
+}
+function openMsgMenu(id){
+  const c=S.chats.find(x=>x.id===currentChat);
+  const m=c&&c.msgs.find(x=>x.id===id);
+  if(!m||m.deleted)return;
+  const b=document.getElementById('msgmenu-body');
+  b.innerHTML=
+    '<button class="report-opt" onclick="copyText(document.getElementById(\'msg-src\').value);closeSheets();toast(\'Скопировано\')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="9" y="9" width="11" height="11" rx="2"/><rect x="4" y="4" width="11" height="11" rx="2"/></svg></span><span><b>Копировать</b><span>Текст сообщения</span></span></button>'+
+    (m.out?'<button class="report-opt" onclick="closeSheets();deleteMsg(\''+id+'\')"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span><span><b>Удалить</b><span>Копия останется для жалоб</span></span></button>':'')+
+    '<input type="hidden" id="msg-src">';
+  b.querySelector('#msg-src').value=m.text;
+  openSheet('sheet-msg');
 }
 async function deleteMsg(id){
   if(!confirm('Удалить сообщение? Копия останется для жалоб.'))return;
@@ -1714,6 +1802,65 @@ function copyText(t){
   }
 }
 
+/* ============ НАСТРОЙКИ: АНОН, УВЕДОМЛЕНИЯ, ЗВУК ============ */
+const setStore={
+  get:k=>{try{return localStorage.getItem('newchat_'+k)==='1'}catch(e){return false}},
+  set:(k,v)=>{try{localStorage.setItem('newchat_'+k,v?'1':'0')}catch(e){}}
+};
+function renderSettings(){
+  document.getElementById('tgl-anon').classList.toggle('on',!!(S&&S.user.anonMode));
+  document.getElementById('tgl-notif').classList.toggle('on',setStore.get('notif')&&typeof Notification!=='undefined'&&Notification.permission==='granted');
+  document.getElementById('tgl-sound').classList.toggle('on',setStore.get('sound'));
+}
+async function toggleAnon(){
+  const on=!S.user.anonMode;
+  if(on&&!confirm('Включить суперанонимность? Новые люди не смогут вас найти и написать первыми. Текущие чаты сохранятся.'))return;
+  try{
+    const r=await api('/api/profile/settings',{anon:on});
+    S.user.anonMode=r.anon;renderSettings();
+    toast(r.anon?'Вы невидимы для поиска':'Вас снова можно найти');
+  }catch(e){}
+}
+async function toggleNotif(){
+  if(typeof Notification==='undefined'){toast('Браузер не поддерживает уведомления');return}
+  const on=!(setStore.get('notif')&&Notification.permission==='granted');
+  if(on){
+    const p=await Notification.requestPermission();
+    if(p!=='granted'){toast('Разрешите уведомления в настройках браузера');return}
+  }
+  setStore.set('notif',on);renderSettings();
+  toast(on?'Уведомления включены':'Уведомления выключены');
+}
+function toggleSound(){
+  const on=!setStore.get('sound');
+  setStore.set('sound',on);renderSettings();
+  if(on)beep();
+  toast(on?'Звук включён':'Звук выключен');
+}
+function beep(){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const o=ctx.createOscillator(),g=ctx.createGain();
+    o.connect(g);g.connect(ctx.destination);
+    o.frequency.value=880;g.gain.setValueAtTime(0.08,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.18);
+    o.start();o.stop(ctx.currentTime+0.18);
+  }catch(e){}
+}
+function notifyMsg(chatId,text){
+  const c=S&&S.chats.find(x=>x.id===chatId);
+  if(!c||c.muted)return; /* чат без звука молчит совсем */
+  const hidden=document.hidden||!document.querySelector('#s-chat.on')||currentChat!==chatId;
+  if(!hidden)return;
+  if(setStore.get('sound'))beep();
+  if(setStore.get('notif')&&typeof Notification!=='undefined'&&Notification.permission==='granted'){
+    try{
+      const n=new Notification((c.peer||{}).name||'Newchat',{body:text.slice(0,80),tag:chatId});
+      n.onclick=()=>{window.focus();openChat(chatId);n.close()};
+    }catch(e){}
+  }
+}
+
 /* ============ АВАТАР ============ */
 function uploadAvatar(input){
   const f=input.files&&input.files[0];
@@ -1795,11 +1942,13 @@ function renderMarket(){
     all.innerHTML=S.market.map(l=>{
       const sl=l.seller||{};
       const st=sl.stats||{deals:0};
+      const btn=l.mine
+        ?'<button class="pill-btn sell" onclick="unsell(\''+l.u+'\')">Снять</button>'
+        :'<button class="pill-btn buy" onclick="openBuy(\''+l.u+'\')">Купить</button>';
       return '<div class="uname-card glass-card" style="margin-top:12px"><div class="u">'+
-      '<div class="h mono">@'+esc(l.u)+'</div>'+
-      '<div class="p">'+esc(sl.name||'—')+' · доверие '+(sl.trust||0)+'% · сделок: '+st.deals+'</div></div>'+
-      '<span class="price mono">'+l.price.toLocaleString('ru')+' ₽</span>'+
-      '<button class="pill-btn buy" onclick="openBuy(\''+l.u+'\')">Купить</button></div>';
+      '<div class="h mono">@'+esc(l.u)+(l.mine?' <span class="val" style="font-size:.68rem;color:var(--accent)">ваш</span>':'')+'</div>'+
+      '<div class="p">'+(l.mine?'Ваш лот — виден всем':esc(sl.name||'—')+' · доверие '+(sl.trust||0)+'% · сделок: '+st.deals)+'</div></div>'+
+      '<span class="price mono">'+l.price.toLocaleString('ru')+' ₽</span>'+btn+'</div>';
     }).join('');
   }
 }
@@ -1893,6 +2042,7 @@ function renderProfile(){
   document.getElementById('trust-fill').style.width=(u.trust||0)+'%';
   document.getElementById('trust-val').textContent=(u.trust||0)+'%';
   renderDeco();
+  renderSettings();
 }
 function renderDeco(){
   document.getElementById('cover-row').innerHTML=COVERS.map((c,i)=>
