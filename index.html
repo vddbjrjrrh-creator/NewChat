@@ -521,7 +521,7 @@ body{
         <div class="field-err" id="auth-err">Введите номер телефона</div>
         <div class="law-note" id="no-server" style="display:none;margin-bottom:12px">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
-          Сервер не подключён. Впишите его адрес в переменную SERVER в файле index.html.
+          <span id="no-server-text">Сервер не подключён. Впишите его адрес в переменную SERVER в файле index.html.</span>
         </div>
         <button class="btn" onclick="authNext()">Продолжить</button>
       </div>
@@ -1094,10 +1094,28 @@ const tgStore={
 async function loadConfig(){
   try{
     const cfg=await api('/api/config');
+    const tgBtn=document.getElementById('tg-btn');
+    const phone=document.getElementById('phone-block');
+    const or=document.getElementById('auth-or');
+    const warn=document.getElementById('no-server');
+
     if(cfg.telegram){
-      document.getElementById('tg-btn').style.display='block';
-      document.getElementById('phone-block').style.display=cfg.sms?'block':'none';
-      document.getElementById('auth-or').style.display=cfg.sms?'flex':'none';
+      tgBtn.style.display='block';
+      phone.style.display=cfg.sms?'block':'none';
+      or.style.display=cfg.sms?'flex':'none';
+      return;
+    }
+    /* Telegram-бот не настроен */
+    tgBtn.style.display='none';
+    or.style.display='none';
+    phone.style.display='block';
+    if(!cfg.sms){
+      /* Ни бота, ни SMS — код придёт прямо на экран, это режим разработки */
+      document.getElementById('no-server-text').textContent='Вход через Telegram не настроен на сервере. Пока работает режим разработки: код появится прямо на экране.';
+      warn.style.display='block';
+    }else{
+      document.getElementById('no-server-text').textContent='Вход через Telegram не настроен на сервере. Добавьте переменные TELEGRAM_BOT_TOKEN и TELEGRAM_BOT_USERNAME на Render.';
+      warn.style.display='block';
     }
   }catch(e){}
 }
@@ -1125,8 +1143,13 @@ function startTgPoll(){
   tgPoll=setInterval(checkTg,2000);
   checkTg();
 }
+let tgBusy=false;
 async function checkTg(){
-  if(!tgSession)return;
+  if(!tgSession||tgBusy||token)return;
+  tgBusy=true;
+  try{ await checkTgOnce() } finally { tgBusy=false }
+}
+async function checkTgOnce(){
   const saved=tgStore.get();
   if(saved&&Date.now()-saved.started>15*60e3){cancelTg();toast('Время вышло, попробуйте снова');return}
 
@@ -1145,7 +1168,11 @@ async function checkTg(){
   let d={};
   try{d=await res.json()}catch(e){return}
 
-  if(res.status===404||res.status===400){cancelTg();toast(d.error||'Начните вход заново');return}
+  if(res.status===404||res.status===400){
+    /* Если токен уже получен параллельным запросом — это не ошибка */
+    if(token)return;
+    cancelTg();toast(d.error||'Начните вход заново');return;
+  }
   if(d.status!=='ok')return;
 
   clearInterval(tgPoll);

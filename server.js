@@ -1236,10 +1236,11 @@ route('GET', '/api/config', async (req, res) => {
 route('POST', '/api/auth/telegram/start', async (req, res) => {
   if (!TG_ENABLED) return send(res, 400, { error: 'Вход через Telegram не настроен' });
 
-  /* Чистим сессии старше 15 минут */
+  /* Чистим сессии старше 15 минут и уже использованные */
   const cutoff = now() - 15 * 60e3;
   for (const s of Object.keys(db.tgSessions)) {
-    if (db.tgSessions[s].created < cutoff) delete db.tgSessions[s];
+    const r = db.tgSessions[s];
+    if (r.created < cutoff || (r.usedAt && r.usedAt < now() - 2 * 60e3)) delete db.tgSessions[s];
   }
 
   const session = crypto.randomBytes(12).toString('hex');
@@ -1253,14 +1254,21 @@ route('POST', '/api/auth/telegram/start', async (req, res) => {
 });
 
 route('POST', '/api/auth/telegram/check', async (req, res, body) => {
-  const rec = db.tgSessions[String(body.session || '')];
+  const key = String(body.session || '');
+  const rec = db.tgSessions[key];
   if (!rec) return send(res, 404, { error: 'Сессия не найдена, начните заново' });
   if (rec.created < now() - 15 * 60e3) return send(res, 400, { error: 'Время вышло, начните заново' });
-  if (rec.status !== 'ok') return send(res, 200, { status: 'pending' });
+  if (rec.status !== 'ok' && rec.status !== 'used') return send(res, 200, { status: 'pending' });
 
   const user = db.users[db.tokens[rec.token]];
+  if (!user) return send(res, 404, { error: 'Сессия не найдена, начните заново' });
   const token = rec.token;
-  delete db.tgSessions[String(body.session)];
+
+  /* Сессию не удаляем сразу: приложение опрашивает сервер параллельно
+     (таймер + возврат из Telegram), и второй запрос получал бы 404,
+     выкидывая человека обратно на вход. Держим две минуты, потом чистим. */
+  rec.status = 'used';
+  rec.usedAt = now();
   save();
 
   send(res, 200, {
