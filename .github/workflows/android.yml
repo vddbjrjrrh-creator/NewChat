@@ -1,0 +1,290 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Поставить Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Подготовить Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Собрать Android-проект
+        run: |
+          set -e
+          APP_URL="https://vddbjrjrrh-creator.github.io/NewChat/"
+          mkdir -p android/app/src/main/java/com/newchat/app
+          mkdir -p android/app/src/main/res/values
+          mkdir -p android/app/src/main/res/drawable
+          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
+          mkdir -p android/app/src/main/res/xml
+
+          cat > android/settings.gradle << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Newchat"
+          include ':app'
+          EOF
+
+          cat > android/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF
+
+          cat > android/gradle.properties << 'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF
+
+          cat > android/app/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.newchat.app'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.newchat.app"
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  debug {
+                      minifyEnabled false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+              <application
+                  android:label="@string/app_name"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
+                  android:theme="@style/AppTheme"
+                  android:usesCleartextTraffic="false"
+                  android:allowBackup="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+                      android:windowSoftInputMode="adjustResize"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > android/app/src/main/java/com/newchat/app/MainActivity.java << EOF
+          package com.newchat.app;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.CookieManager;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Toast;
+          import android.net.Uri;
+          import android.content.Intent;
+          import android.graphics.Color;
+
+          public class MainActivity extends Activity {
+
+              private static final String APP_URL = "${APP_URL}";
+              private WebView web;
+
+              @Override
+              protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+
+                  web = new WebView(this);
+                  web.setBackgroundColor(Color.parseColor("#EEF0F5"));
+
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setDatabaseEnabled(true);
+                  s.setLoadWithOverviewMode(true);
+                  s.setUseWideViewPort(true);
+                  s.setSupportZoom(false);
+                  s.setBuiltInZoomControls(false);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  s.setCacheMode(WebSettings.LOAD_DEFAULT);
+
+                  CookieManager.getInstance().setAcceptCookie(true);
+                  CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+
+                  web.setWebChromeClient(new WebChromeClient());
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                          if (url.startsWith("http")) {
+                              view.loadUrl(url);
+                              return true;
+                          }
+                          try {
+                              startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                          } catch (Exception ignored) { }
+                          return true;
+                      }
+
+                      @Override
+                      public void onReceivedError(WebView view, int code, String desc, String url) {
+                          Toast.makeText(MainActivity.this,
+                              "Нет связи. Проверьте интернет.", Toast.LENGTH_SHORT).show();
+                      }
+                  });
+
+                  setContentView(web);
+
+                  if (state != null) {
+                      web.restoreState(state);
+                  } else {
+                      web.loadUrl(APP_URL);
+                  }
+              }
+
+              @Override
+              protected void onSaveInstanceState(Bundle out) {
+                  super.onSaveInstanceState(out);
+                  web.saveState(out);
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (web.canGoBack()) {
+                      web.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+          cat > android/app/src/main/res/values/strings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Newchat</string>
+          </resources>
+          EOF
+
+          cat > android/app/src/main/res/values/styles.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+                  <item name="android:windowLightStatusBar">true</item>
+                  <item name="android:statusBarColor">#EEF0F5</item>
+                  <item name="android:navigationBarColor">#EEF0F5</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > android/app/src/main/res/values/colors.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#6C5CE7</color>
+          </resources>
+          EOF
+
+          cat > android/app/src/main/res/drawable/ic_launcher_foreground.xml << 'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M54,30 L72,38 L72,54 C72,68 63,76 54,80 C45,76 36,68 36,54 L36,38 Z" />
+          </vector>
+          EOF
+
+          cat > android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+
+          echo "Проект собран, файлы на месте:"
+          find android -type f | sort
+
+      - name: Собрать APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Переименовать APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/newchat.apk
+          ls -la out
+
+      - name: Сохранить APK как артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: newchat-apk
+          path: out/newchat.apk
+
+      - name: Выложить APK в Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Newchat APK ${{ github.run_number }}
+          body: |
+            Установочный файл Newchat.
+
+            Как поставить:
+            1. Скачай newchat.apk на телефон
+            2. Открой его — Android спросит разрешение на установку из этого источника, разреши
+            3. Установи и открывай
+          files: out/newchat.apk
