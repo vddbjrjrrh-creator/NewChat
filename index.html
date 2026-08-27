@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Newchat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF0F5;
+  --glass:rgba(255,255,255,.62);
+  --glass-2:rgba(255,255,255,.8);
+  --glass-line:rgba(255,255,255,.85);
+  --edge:rgba(23,24,29,.07);
+  --ink:#17181D;
+  --ink-2:#787A86;
+  --accent:#6C5CE7;
+  --accent-soft:rgba(108,92,231,.12);
+  --danger:#E8453C;
+  --danger-soft:rgba(232,69,60,.1);
+  --trust:#18A85C;
+  --trust-soft:rgba(24,168,92,.1);
+  --gold:#C7962A;
+  --verify:#2E9BFF;
+  --radius:18px;
+  font-size:15px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  font-family:'Manrope',system-ui,sans-serif;
+  background:var(--bg);
+  color:var(--ink);
+  overflow:hidden;
+}
+.mono{font-family:'JetBrains Mono',monospace}
+
+.app{
+  height:100%;max-width:520px;margin:0 auto;position:relative;
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--bg);
+}
+.app::before{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(420px 320px at 88% -6%, rgba(135,116,225,.2), transparent 65%),
+    radial-gradient(360px 300px at -12% 38%, rgba(88,178,255,.16), transparent 60%),
+    radial-gradient(340px 300px at 75% 106%, rgba(255,158,120,.12), transparent 60%);
+}
+.screen{display:none;flex-direction:column;height:100%;overflow:hidden;position:relative;z-index:1}
+.screen.active{display:flex}
+
+.glass{
+  background:var(--glass);
+  backdrop-filter:blur(24px) saturate(1.6);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);
+  border:1px solid var(--glass-line);
+}
+.glass-card{
+  background:linear-gradient(135deg, rgba(255,255,255,.82), rgba(255,255,255,.5));
+  backdrop-filter:blur(24px) saturate(1.6);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);
+  border:1px solid var(--glass-line);
+  border-radius:var(--radius);
+  box-shadow:0 8px 24px rgba(40,45,70,.07), inset 0 1px 0 #fff;
+}
+
+/* ===== Таббар ===== */
+.tabbar{
+  display:flex;gap:4px;
+  margin:10px 14px calc(14px + env(safe-area-inset-bottom));padding:7px;
+  border-radius:26px;flex-shrink:0;
+  background:rgba(255,255,255,.62);
+  backdrop-filter:blur(26px) saturate(1.7);
+  -webkit-backdrop-filter:blur(26px) saturate(1.7);
+  border:1px solid var(--glass-line);
+  box-shadow:0 12px 32px rgba(40,45,70,.14), inset 0 1px 0 #fff;
+}
+.tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:none;cursor:pointer;padding:7px 0;border-radius:19px;
+  color:var(--ink-2);font-family:inherit;font-size:10px;font-weight:700;
+}
+.tab.on{color:var(--accent);background:var(--accent-soft);box-shadow:inset 0 1px 0 rgba(255,255,255,.8)}
+.tab svg{width:23px;height:23px}
+
+.hdr{padding:calc(16px + env(safe-area-inset-top)) 18px 12px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.hdr h1{font-size:1.4rem;font-weight:800;letter-spacing:-.02em}
+.hdr .spacer{flex:1}
+.scroll{flex:1;overflow-y:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.scroll::-webkit-scrollbar{display:none}
+
+/* ===== Онбординг ===== */
+.onb{justify-content:center;padding:36px 26px}
+.logo-orb{
+  width:92px;height:92px;border-radius:50%;margin:0 auto 22px;
+  background:radial-gradient(circle at 32% 28%, #A796F0, var(--accent) 72%);
+  box-shadow:0 16px 44px rgba(108,92,231,.4), inset 0 2px 6px rgba(255,255,255,.5);
+  display:flex;align-items:center;justify-content:center;
+}
+.logo-orb svg{width:40px;height:40px;stroke:#fff}
+.onb h2{font-size:1.75rem;font-weight:800;text-align:center;letter-spacing:-.03em}
+.onb .sub{color:var(--ink-2);text-align:center;margin:8px 0 30px;line-height:1.5}
+.field{
+  display:flex;align-items:center;gap:10px;border-radius:var(--radius);
+  padding:15px 16px;margin-bottom:12px;
+  background:var(--glass-2);border:1px solid var(--glass-line);
+  box-shadow:inset 0 1px 3px rgba(40,45,70,.05);
+}
+.field:focus-within{border-color:var(--accent)}
+.field input{
+  border:none;outline:none;background:none;flex:1;min-width:0;
+  font-family:'JetBrains Mono',monospace;font-size:1rem;color:var(--ink);
+}
+.field input.txt{font-family:'Manrope'}
+.field input::placeholder{color:var(--ink-2)}
+.field-err{font-size:.74rem;color:var(--danger);margin:-6px 4px 10px;display:none}
+.btn{
+  display:block;width:100%;padding:15px;border:none;border-radius:var(--radius);
+  background:linear-gradient(135deg,#9788EA,var(--accent));
+  color:#fff;font-family:inherit;font-size:1rem;font-weight:800;cursor:pointer;
+  box-shadow:0 10px 28px rgba(108,92,231,.35), inset 0 1px 0 rgba(255,255,255,.35);
+}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.5;box-shadow:none}
+.btn.ghost{
+  background:var(--glass);box-shadow:inset 0 1px 0 #fff;color:var(--ink);
+  border:1px solid var(--edge);margin-top:10px;font-weight:700;
+}
+.btn.danger{background:linear-gradient(135deg,#FF7A6E,#E0453C);box-shadow:0 10px 28px rgba(232,69,60,.3)}
+.auth-note{font-size:.74rem;color:var(--ink-2);text-align:center;margin-top:22px;line-height:1.55}
+
+/* ===== Пустые состояния ===== */
+.empty{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:8px;padding:20px 40px;text-align:center;color:var(--ink-2);
+}
+.empty .e-ic{
+  width:74px;height:74px;border-radius:50%;margin-bottom:8px;
+  background:var(--glass-2);border:1px solid var(--glass-line);
+  display:flex;align-items:center;justify-content:center;color:var(--accent);
+  box-shadow:0 8px 24px rgba(40,45,70,.08), inset 0 1px 0 #fff;
+}
+.empty .e-ic svg{width:32px;height:32px}
+.empty b{color:var(--ink);font-size:1.02rem}
+.empty p{font-size:.84rem;line-height:1.5}
+
+/* ===== FAB ===== */
+.fab{
+  position:absolute;right:18px;bottom:106px;z-index:5;
+  width:58px;height:58px;border-radius:50%;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#9788EA,var(--accent));color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 14px 34px rgba(108,92,231,.45), inset 0 1px 0 rgba(255,255,255,.35);
+}
+.fab:active{transform:scale(.94)}
+.fab svg{width:24px;height:24px}
+
+/* ===== Чаты ===== */
+.search-pill{
+  margin:0 16px 8px;padding:12px 16px;border-radius:22px;
+  display:flex;align-items:center;gap:10px;color:var(--ink-2);font-size:.9rem;
+  box-shadow:inset 0 1px 3px rgba(40,45,70,.04);
+}
+.chat-item{display:flex;gap:12px;padding:12px 18px;cursor:pointer;align-items:center}
+.chat-item:hover{background:rgba(255,255,255,.55)}
+.ava{
+  width:52px;height:52px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-weight:800;font-size:1.15rem;
+  box-shadow:0 4px 12px rgba(40,45,70,.15), inset 0 1px 2px rgba(255,255,255,.4);
+}
+.chat-item .mid{flex:1;min-width:0}
+.chat-item .name{font-weight:700;display:flex;align-items:center;gap:5px}
+.chat-item .prev{color:var(--ink-2);font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.chat-item .end{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.chat-item .time{font-size:.72rem;color:var(--ink-2)}
+.vcheck{
+  width:16px;height:16px;border-radius:50%;background:var(--verify);flex-shrink:0;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.vcheck svg{width:10px;height:10px;stroke:#fff;stroke-width:3.2}
+
+/* ===== Чат ===== */
+.chat-hdr-info{flex:1;min-width:0}
+.chat-hdr-info .n{font-weight:800;display:flex;align-items:center;gap:5px}
+.chat-hdr-info .s{font-size:.75rem;color:var(--ink-2);font-weight:600}
+.icon-btn{
+  background:none;border:none;cursor:pointer;color:var(--ink);
+  width:38px;height:38px;border-radius:13px;
+  display:flex;align-items:center;justify-content:center;
+}
+.icon-btn:hover{background:var(--glass)}
+.msgs{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:8px;scrollbar-width:none}
+.msgs::-webkit-scrollbar{display:none}
+.day-chip{
+  align-self:center;font-size:.7rem;font-weight:700;color:var(--ink-2);
+  background:var(--glass);border:1px solid var(--glass-line);
+  border-radius:12px;padding:4px 12px;margin:4px 0;
+}
+.msg{max-width:78%;padding:9px 13px;border-radius:17px;line-height:1.4;font-size:.92rem;position:relative;word-break:break-word}
+.msg.in{
+  background:var(--glass-2);border:1px solid var(--glass-line);
+  box-shadow:0 3px 10px rgba(40,45,70,.06);
+  align-self:flex-start;border-bottom-left-radius:6px;
+}
+.msg.out{
+  background:linear-gradient(135deg,#9083E6,var(--accent));
+  color:#fff;align-self:flex-end;border-bottom-right-radius:6px;
+  box-shadow:0 6px 18px rgba(108,92,231,.28);
+}
+.msg .t{display:block;font-size:.65rem;opacity:.55;margin-top:3px;text-align:right}
+.composer{display:flex;gap:8px;padding:10px 12px calc(12px + env(safe-area-inset-bottom));flex-shrink:0}
+.composer input{
+  flex:1;min-width:0;border-radius:23px;padding:12px 17px;
+  font-family:inherit;font-size:.92rem;outline:none;color:var(--ink);
+  background:var(--glass-2);border:1px solid var(--glass-line);
+  box-shadow:inset 0 1px 3px rgba(40,45,70,.05);
+}
+.composer input::placeholder{color:var(--ink-2)}
+.composer input:focus{border-color:var(--accent)}
+.send{
+  width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
+  background:linear-gradient(135deg,#9788EA,var(--accent));color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 8px 22px rgba(108,92,231,.35);
+}
+
+/* ===== Шторки ===== */
+.sheet-veil{
+  position:absolute;inset:0;background:rgba(35,38,55,.32);
+  opacity:0;pointer-events:none;transition:opacity .2s;z-index:10;
+}
+.sheet-veil.show{opacity:1;pointer-events:auto}
+.sheet{
+  position:absolute;left:8px;right:8px;bottom:8px;z-index:11;
+  border-radius:28px;padding:10px 18px calc(22px + env(safe-area-inset-bottom));
+  background:rgba(255,255,255,.8);
+  backdrop-filter:blur(32px) saturate(1.8);
+  -webkit-backdrop-filter:blur(32px) saturate(1.8);
+  border:1px solid rgba(255,255,255,.95);
+  box-shadow:inset 0 1px 0 #fff, 0 -14px 50px rgba(40,45,70,.22);
+  transform:translateY(115%);transition:transform .28s cubic-bezier(.3,.9,.4,1);
+  max-height:88%;overflow-y:auto;scrollbar-width:none;
+}
+.sheet::-webkit-scrollbar{display:none}
+.sheet.show{transform:translateY(0)}
+.sheet .grip{width:38px;height:4.5px;border-radius:3px;background:rgba(23,24,29,.15);margin:6px auto 15px}
+.sheet h3{font-size:1.08rem;font-weight:800;margin-bottom:4px}
+.sheet .desc{font-size:.82rem;color:var(--ink-2);line-height:1.5;margin-bottom:14px}
+.report-opt{
+  display:flex;align-items:center;gap:12px;width:100%;
+  padding:14px;border-radius:var(--radius);margin-bottom:10px;
+  background:var(--glass-2);border:1px solid var(--edge);
+  cursor:pointer;font-family:inherit;text-align:left;color:var(--ink);
+}
+.report-opt:hover{border-color:var(--danger);background:var(--danger-soft)}
+.report-opt .ic{
+  width:40px;height:40px;border-radius:13px;background:var(--danger-soft);
+  color:var(--danger);display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.report-opt b{display:block;font-size:.95rem}
+.report-opt span{font-size:.76rem;color:var(--ink-2)}
+.law-note{
+  display:flex;gap:9px;border-radius:14px;padding:11px 13px;
+  background:var(--accent-soft);border:1px solid rgba(108,92,231,.22);
+  font-size:.75rem;color:var(--accent);line-height:1.45;font-weight:600;
+}
+.law-note svg{width:17px;height:17px;flex-shrink:0;margin-top:1px}
+.confirm-box{text-align:center;padding:6px 4px 0}
+.confirm-box .big-ic{
+  width:68px;height:68px;border-radius:50%;margin:4px auto 14px;
+  display:flex;align-items:center;justify-content:center;
+}
+.confirm-box .big-ic.red{background:var(--danger-soft);color:var(--danger)}
+.confirm-box .big-ic.blue{background:var(--accent-soft);color:var(--accent)}
+.confirm-box .big-ic svg{width:32px;height:32px}
+.confirm-box p{font-size:.85rem;color:var(--ink-2);line-height:1.55;margin:8px 0 18px}
+.confirm-box p b{color:var(--ink)}
+.progress-line{height:5px;border-radius:3px;background:rgba(23,24,29,.08);overflow:hidden;margin:16px 0 8px}
+.progress-line i{display:block;height:100%;width:0;background:linear-gradient(90deg,#9788EA,var(--accent));transition:width 1.6s ease}
+.steps{font-size:.76rem;color:var(--ink-2);text-align:left;line-height:2.1}
+.steps .done{color:var(--trust);font-weight:700}
+
+/* ===== Батарейка ===== */
+.batt{display:inline-flex;align-items:center;gap:7px}
+.batt-body{border:2.5px solid currentColor;border-radius:7px;position:relative;padding:4px;width:64px;height:28px}
+.batt-body::after{content:"";position:absolute;right:-7px;top:8px;width:4.5px;height:10px;background:currentColor;border-radius:0 2px 2px 0}
+.batt-fill{height:100%;border-radius:3px;background:currentColor}
+
+/* ===== Кошелёк ===== */
+.wallet-hero{
+  margin:4px 16px 14px;padding:22px 20px;border-radius:24px;position:relative;overflow:hidden;
+  background:linear-gradient(140deg,#8B7BE8,#6C5CE7 55%,#5AA8F0);
+  border:1px solid rgba(255,255,255,.5);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45), 0 18px 44px rgba(108,92,231,.3);
+  color:#fff;
+}
+.wallet-hero::before{
+  content:"";position:absolute;top:-60px;right:-40px;width:190px;height:190px;border-radius:50%;
+  background:radial-gradient(circle, rgba(255,255,255,.35), transparent 70%);
+}
+.wallet-hero .lbl{font-size:.75rem;font-weight:700;color:rgba(255,255,255,.8);letter-spacing:.05em}
+.wallet-hero .amount{font-size:2.3rem;font-weight:800;letter-spacing:-.02em;margin:6px 0 2px}
+.wallet-hero .conv{font-size:.75rem;color:rgba(255,255,255,.75)}
+.wallet-actions{display:flex;gap:9px;margin-top:18px;position:relative}
+.wa-btn{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:12px 4px;border-radius:16px;cursor:pointer;
+  background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);
+  color:#fff;font-family:inherit;font-size:.7rem;font-weight:700;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.35);
+}
+.wa-btn:active{transform:scale(.96)}
+.wa-btn svg{width:21px;height:21px}
+.w-section{padding:6px 18px 2px;font-size:.78rem;font-weight:800;color:var(--ink-2);letter-spacing:.05em;text-transform:uppercase}
+.w-item{display:flex;align-items:center;gap:12px;margin:8px 16px 0;padding:13px 14px;border-radius:var(--radius)}
+.w-item .ic{width:40px;height:40px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.w-item .u{flex:1;min-width:0}
+.w-item .h{font-weight:700;font-size:.92rem}
+.w-item .p{font-size:.74rem;color:var(--ink-2);margin-top:1px}
+.w-item .amt{font-weight:800;font-size:.92rem}
+.w-item .amt.plus{color:var(--trust)}
+.cur-row{display:flex;gap:8px;margin-bottom:14px}
+.cur-btn{
+  flex:1;padding:12px 4px;border-radius:14px;cursor:pointer;text-align:center;
+  background:var(--glass-2);border:1.5px solid var(--edge);
+  color:var(--ink);font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.95rem;
+}
+.cur-btn small{display:block;font-family:'Manrope';font-size:.62rem;color:var(--ink-2);font-weight:700;margin-top:2px}
+.cur-btn.on{border-color:var(--accent);background:var(--accent-soft)}
+.conv-preview{
+  border-radius:14px;padding:12px 14px;margin-bottom:14px;text-align:center;
+  background:var(--glass-2);border:1px dashed var(--edge);
+  font-size:.82rem;color:var(--ink-2);
+}
+.conv-preview b{color:var(--ink);font-size:1rem}
+.nfc-wave{
+  width:110px;height:110px;border-radius:50%;margin:6px auto 16px;position:relative;
+  background:radial-gradient(circle at 35% 30%, #A796F0, #5B4BD4 75%);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 14px 40px rgba(108,92,231,.4), inset 0 2px 6px rgba(255,255,255,.5);
+}
+.nfc-wave svg{width:46px;height:46px;stroke:#fff}
+.nfc-wave::before,.nfc-wave::after{
+  content:"";position:absolute;inset:-14px;border-radius:50%;
+  border:2px solid rgba(108,92,231,.35);animation:pulse 1.8s infinite;
+}
+.nfc-wave::after{inset:-30px;animation-delay:.5s;border-color:rgba(108,92,231,.18)}
+@keyframes pulse{0%{transform:scale(.92);opacity:1}100%{transform:scale(1.12);opacity:0}}
+.qr-grid{
+  width:150px;height:150px;margin:6px auto 16px;border-radius:18px;padding:12px;
+  background:#fff;border:1px solid var(--edge);
+  box-shadow:0 8px 24px rgba(40,45,70,.1);
+  display:grid;grid-template-columns:repeat(7,1fr);grid-template-rows:repeat(7,1fr);gap:3px;
+}
+.qr-grid i{background:#17181D;border-radius:2px}
+.qr-grid i.o{background:transparent}
+.fee-note{font-size:.72rem;color:var(--ink-2);text-align:center;margin:-6px 0 12px}
+
+/* ===== Биржа ===== */
+.market-tabs{display:flex;gap:8px;padding:2px 18px 6px}
+.mtab{
+  padding:8px 16px;border-radius:20px;cursor:pointer;
+  background:var(--glass);border:1px solid var(--edge);
+  font-family:inherit;font-weight:700;font-size:.82rem;color:var(--ink-2);
+}
+.mtab.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.slots-card{margin:12px 16px 4px;padding:16px}
+.slots-card .row{display:flex;justify-content:space-between;align-items:center}
+.slots-card b{font-size:.95rem}
+.slots-dots{display:flex;gap:6px;margin-top:12px}
+.slot-dot{flex:1;height:7px;border-radius:4px;background:rgba(23,24,29,.1)}
+.slot-dot.full{background:linear-gradient(90deg,#9788EA,var(--accent))}
+.slot-dot.prem{background:repeating-linear-gradient(45deg,var(--gold),var(--gold) 4px,rgba(199,150,42,.3) 4px,rgba(199,150,42,.3) 8px)}
+.slots-card .hint{font-size:.72rem;color:var(--ink-2);margin-top:10px;display:flex;align-items:center;gap:8px}
+.prem-chip{
+  font-size:.66rem;font-weight:800;color:var(--gold);
+  border:1px solid rgba(199,150,42,.5);border-radius:9px;padding:2px 8px;letter-spacing:.05em;
+}
+.uname-card{margin:10px 16px 0;padding:14px 16px;display:flex;align-items:center;gap:12px}
+.uname-card .u{flex:1;min-width:0}
+.uname-card .h{font-weight:600;font-size:1rem}
+.uname-card .p{font-size:.74rem;color:var(--ink-2);margin-top:2px}
+.price{font-weight:700;font-size:.92rem;white-space:nowrap}
+.pill-btn{border:none;border-radius:13px;padding:9px 15px;cursor:pointer;font-family:inherit;font-weight:800;font-size:.8rem}
+.pill-btn.sell{background:var(--accent-soft);color:var(--accent);border:1px solid rgba(108,92,231,.3)}
+.tag-sale{
+  font-size:.64rem;font-weight:800;color:var(--trust);background:var(--trust-soft);
+  border:1px solid rgba(24,168,92,.3);border-radius:9px;padding:2px 8px;letter-spacing:.04em;
+}
+
+/* ===== Профиль ===== */
+.profile-cover{
+  height:148px;margin:0 0 -46px;position:relative;transition:background .3s;
+}
+.profile-cover::after{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(240px 120px at 80% 10%, rgba(255,255,255,.35), transparent 70%);
+}
+.profile-top{padding:0 18px 16px;text-align:center;position:relative}
+.profile-top .ava{
+  width:92px;height:92px;margin:0 auto 10px;font-size:2rem;position:relative;
+  border:4px solid var(--bg);transition:background .3s;
+}
+.status-emoji{
+  position:absolute;bottom:2px;right:-4px;font-size:1.35rem;
+  filter:drop-shadow(0 2px 3px rgba(40,45,70,.25));
+}
+.profile-top h2{font-size:1.3rem;font-weight:800;display:inline-flex;align-items:center;gap:6px}
+.profile-top .h{color:var(--ink-2);font-size:.86rem;margin-top:3px}
+.dev-tag{color:var(--accent);font-weight:700;margin-top:4px;font-size:.86rem}
+.trust-card{margin:6px 16px 14px;padding:16px}
+.trust-card .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.trust-card b{font-size:.95rem}
+.trust-val{color:var(--trust);font-weight:800}
+.trust-card p{font-size:.78rem;color:var(--ink-2);line-height:1.5;margin-top:10px}
+.plist{padding:0 16px 14px}
+.pitem{display:flex;align-items:center;gap:12px;margin-top:8px;padding:14px;font-weight:600;font-size:.92rem;cursor:pointer}
+.pitem svg{width:21px;height:21px;color:var(--ink-2)}
+.pitem .spacer{flex:1}
+.pitem .val{color:var(--ink-2);font-weight:500;font-size:.8rem}
+.verify-cta{
+  margin:0 16px 4px;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;
+  border-radius:var(--radius);
+  background:linear-gradient(135deg, rgba(46,155,255,.13), rgba(255,255,255,.6));
+  border:1px solid rgba(46,155,255,.3);
+}
+.verify-cta .ic{
+  width:40px;height:40px;border-radius:50%;background:var(--verify);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 6px 16px rgba(46,155,255,.35);
+}
+.verify-cta .ic svg{width:20px;height:20px;stroke:#fff}
+.verify-cta b{font-size:.9rem;display:block}
+.verify-cta span{font-size:.74rem;color:var(--ink-2)}
+.deco-label{font-size:.78rem;font-weight:800;color:var(--ink-2);letter-spacing:.04em;text-transform:uppercase;margin:14px 0 8px}
+.swatch-row{display:flex;gap:10px}
+.swatch{
+  width:44px;height:44px;border-radius:50%;cursor:pointer;
+  border:3px solid transparent;box-shadow:0 4px 12px rgba(40,45,70,.15);
+}
+.swatch.on{border-color:var(--ink)}
+.emoji-row{display:flex;gap:8px;flex-wrap:wrap}
+.emoji-opt{
+  width:44px;height:44px;border-radius:14px;cursor:pointer;font-size:1.3rem;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--glass-2);border:2px solid var(--edge);
+}
+.emoji-opt.on{border-color:var(--accent);background:var(--accent-soft)}
+
+.toast{
+  position:absolute;left:50%;bottom:110px;transform:translateX(-50%) translateY(20px);
+  padding:11px 18px;border-radius:15px;z-index:30;white-space:nowrap;max-width:92%;
+  overflow:hidden;text-overflow:ellipsis;
+  background:rgba(23,24,29,.88);color:#fff;
+  font-size:.83rem;font-weight:600;opacity:0;pointer-events:none;transition:all .25s;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ОНБОРДИНГ: ТЕЛЕФОН -->
+  <div class="screen onb" id="s-auth">
+    <div>
+      <div class="logo-orb">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+      </div>
+      <h2>Newchat</h2>
+      <p class="sub">Мессенджер, где скамеры и доксеры<br>отвечают по закону.</p>
+      <div class="field">
+        <span class="mono" style="color:var(--ink-2)">+7</span>
+        <input type="tel" placeholder="900 000-00-00" id="auth-phone" maxlength="15" inputmode="tel">
+      </div>
+      <div class="field-err" id="auth-err">Введите номер телефона</div>
+      <button class="btn" onclick="authNext()">Продолжить</button>
+      <p class="auth-note">Продолжая, вы соглашаетесь с правилами.<br>Жалобы «Докс» и «Скам» передаются в полицию.</p>
+    </div>
+  </div>
+
+  <!-- ОНБОРДИНГ: КОД -->
+  <div class="screen onb" id="s-code">
+    <div>
+      <h2 style="font-size:1.4rem">Код подтверждения</h2>
+      <p class="sub">Мы отправили код на номер<br><span class="mono" id="code-phone"></span></p>
+      <div class="field">
+        <input type="tel" placeholder="• • • • •" id="auth-code" maxlength="5" inputmode="numeric" style="text-align:center;letter-spacing:.4em;font-size:1.2rem">
+      </div>
+      <div class="field-err" id="code-err">Введите 5 цифр кода</div>
+      <button class="btn" onclick="codeNext()">Подтвердить</button>
+      <button class="btn ghost" onclick="show('s-auth')">Изменить номер</button>
+    </div>
+  </div>
+
+  <!-- ОНБОРДИНГ: ПРОФИЛЬ -->
+  <div class="screen onb" id="s-setup">
+    <div>
+      <h2 style="font-size:1.4rem">Ваш профиль</h2>
+      <p class="sub">Как вас будут видеть в Newchat</p>
+      <div class="field">
+        <input type="text" class="txt" placeholder="Имя" id="setup-name" maxlength="30">
+      </div>
+      <div class="field">
+        <span class="mono" style="color:var(--ink-2)">@</span>
+        <input type="text" placeholder="username" id="setup-uname" maxlength="20" autocapitalize="off">
+      </div>
+      <div class="field-err" id="setup-err">Заполните имя и юзернейм</div>
+      <button class="btn" onclick="finishSetup()">Начать</button>
+    </div>
+  </div>
+
+  <!-- ЧАТЫ -->
+  <div class="screen" id="s-chats">
+    <div class="hdr"><h1>Чаты</h1><div class="spacer"></div></div>
+    <div class="search-pill glass">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      Поиск
+    </div>
+    <div class="scroll" id="chat-list"></div>
+    <button class="fab" onclick="openSheet('sheet-newchat')" title="Новый чат">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+    </button>
+    <div class="tabbar">
+      <button class="tab on" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
+      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
+      <button class="tab" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
+    </div>
+
+    <div class="sheet-veil" id="veil-chats" onclick="closeSheets()"></div>
+    <div class="sheet" id="sheet-newchat">
+      <div class="grip"></div>
+      <h3>Новый чат</h3>
+      <p class="desc">Введите юзернейм собеседника, чтобы начать переписку.</p>
+      <div class="field">
+        <span class="mono" style="color:var(--ink-2)">@</span>
+        <input type="text" placeholder="username" id="nc-uname" maxlength="20" autocapitalize="off">
+      </div>
+      <button class="btn" onclick="createChat()">Начать чат</button>
+    </div>
+  </div>
+
+  <!-- ЧАТ -->
+  <div class="screen" id="s-chat">
+    <div class="hdr">
+      <button class="icon-btn" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="22" height="22"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="ava" id="chat-ava" style="width:40px;height:40px;font-size:.95rem"></div>
+      <div class="chat-hdr-info">
+        <div class="n" id="chat-name"></div>
+        <div class="s" id="chat-sub"></div>
+      </div>
+      <button class="icon-btn" id="chat-menu-btn" onclick="openSheet('sheet-report')"><svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
+    </div>
+    <div class="msgs" id="chat-msgs"></div>
+    <div class="composer">
+      <input placeholder="Сообщение" id="composer-input">
+      <button class="send" onclick="sendMsg()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20"><path d="M4 12l16-7-4 7 4 7-16-7z"/></svg></button>
+    </div>
+
+    <div class="sheet-veil" id="veil-chat" onclick="closeSheets()"></div>
+
+    <div class="sheet" id="sheet-report">
+      <div class="grip"></div>
+      <h3>Пожаловаться</h3>
+      <p class="desc">Вся переписка — включая сообщения, которые собеседник удалил, — будет автоматически передана в полицию.</p>
+      <button class="report-opt" onclick="startReport('докс')">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/><path d="M2 2l20 20" stroke-linecap="round"/></svg></span>
+        <span><b>Докс</b><span>Слив личных данных, адреса, документов</span></span>
+      </button>
+      <button class="report-opt" onclick="startReport('скам')">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="12" r="9"/><path d="M12 7v5"/><circle cx="12" cy="16" r=".5" fill="currentColor"/></svg></span>
+        <span><b>Скам</b><span>Мошенничество, обман, вымогательство</span></span>
+      </button>
+      <div class="law-note">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        Ложные жалобы снижают батарейку доверия. Система проверяет скорость и связи жалующихся аккаунтов.
+      </div>
+    </div>
+
+    <div class="sheet" id="sheet-confirm">
+      <div class="grip"></div>
+      <div class="confirm-box">
+        <div class="big-ic red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v4"/><circle cx="12" cy="17.5" r=".5" fill="currentColor"/></svg></div>
+        <h3>Жалоба: <span id="report-kind">скам</span></h3>
+        <p>В полицию уйдёт полная копия чата с «<span id="report-target"></span>», включая удалённые сообщения, метаданные и ID аккаунтов. Отменить нельзя.</p>
+        <button class="btn danger" onclick="submitReport()">Передать в полицию</button>
+        <button class="btn ghost" onclick="closeSheets()">Отмена</button>
+      </div>
+    </div>
+
+    <div class="sheet" id="sheet-sent">
+      <div class="grip"></div>
+      <div class="confirm-box">
+        <div class="big-ic blue"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg></div>
+        <h3>Передаём в полицию</h3>
+        <div class="progress-line"><i id="pbar"></i></div>
+        <div class="steps">
+          <div id="st1">○ Сбор переписки и удалённых сообщений</div>
+          <div id="st2">○ Проверка на накрутку жалоб</div>
+          <div id="st3">○ Шифрованная передача в полицию</div>
+        </div>
+        <button class="btn" style="margin-top:16px" onclick="closeSheets()">Готово</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- КОШЕЛЁК -->
+  <div class="screen" id="s-wallet">
+    <div class="hdr"><h1>Кошелёк</h1></div>
+    <div class="scroll">
+      <div class="wallet-hero">
+        <div class="lbl">БАЛАНС</div>
+        <div class="amount mono" id="balance">0 ₽</div>
+        <div class="conv" id="balance-conv">≈ 0 $ · 0 AED</div>
+        <div class="wallet-actions">
+          <button class="wa-btn" onclick="openSheet('sheet-topup')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            Пополнить
+          </button>
+          <button class="wa-btn" onclick="openSheet('sheet-withdraw')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            На карту
+          </button>
+          <button class="wa-btn" onclick="openSheet('sheet-nfc')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a8 8 0 010 8M9.5 9.5a4.5 4.5 0 010 5M13 11a1.5 1.5 0 010 2" stroke-linecap="round"/></svg>
+            NFC
+          </button>
+          <button class="wa-btn" onclick="openSheet('sheet-qr')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM19 19h2"/></svg>
+            QR
+          </button>
+        </div>
+      </div>
+      <div class="w-section">История</div>
+      <div id="w-history"></div>
+      <div style="height:12px"></div>
+    </div>
+    <div class="tabbar">
+      <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
+      <button class="tab on" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
+      <button class="tab" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
+    </div>
+
+    <div class="sheet-veil" id="veil-wallet" onclick="closeSheets()"></div>
+
+    <div class="sheet" id="sheet-topup">
+      <div class="grip"></div>
+      <h3>Пополнить кошелёк</h3>
+      <p class="desc">Любая валюта сразу конвертируется в рубли по текущему курсу.</p>
+      <div class="cur-row">
+        <button class="cur-btn on" id="cur-rub" onclick="setCur('rub')">₽<small>Рубли</small></button>
+        <button class="cur-btn" id="cur-usd" onclick="setCur('usd')">$<small>Доллары</small></button>
+        <button class="cur-btn" id="cur-aed" onclick="setCur('aed')">AED<small>Дирхамы</small></button>
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <input type="number" placeholder="Сумма" id="topup-amount" oninput="updConv()" inputmode="decimal">
+        <span class="mono" style="color:var(--ink-2)" id="cur-sign">₽</span>
+      </div>
+      <div class="conv-preview" id="conv-preview">На баланс поступит: <b class="mono">0 ₽</b></div>
+      <button class="btn" onclick="doTopup()">Пополнить</button>
+    </div>
+
+    <div class="sheet" id="sheet-withdraw">
+      <div class="grip"></div>
+      <h3>Вывод на карту</h3>
+      <p class="desc">Рубли с баланса поступят на банковскую карту в течение пары минут.</p>
+      <div class="field" style="margin-bottom:12px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink-2)" stroke-width="2" width="19" height="19"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/></svg>
+        <input type="text" placeholder="Номер карты" id="wd-card" maxlength="19" oninput="fmtCard(this)" inputmode="numeric">
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <input type="number" placeholder="Сумма" id="wd-amount" oninput="updWd()" inputmode="decimal">
+        <span class="mono" style="color:var(--ink-2)">₽</span>
+      </div>
+      <div class="conv-preview" id="wd-preview">Придёт на карту: <b class="mono">0 ₽</b></div>
+      <p class="fee-note">Комиссия 1% · минимум 100 ₽</p>
+      <button class="btn" onclick="doWithdraw()">Вывести</button>
+    </div>
+
+    <div class="sheet" id="sheet-nfc">
+      <div class="grip"></div>
+      <div class="confirm-box">
+        <h3>Оплата через NFC</h3>
+        <div class="nfc-wave">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M6 8a8 8 0 010 8M10 9.5a4.5 4.5 0 010 5M13.5 11a1.8 1.8 0 010 2"/></svg>
+        </div>
+        <p>Ожидание терминала…<br>Поднесите телефон к терминалу в магазине — спишется с баланса в рублях.</p>
+        <button class="btn ghost" onclick="closeSheets()">Закрыть</button>
+      </div>
+    </div>
+
+    <div class="sheet" id="sheet-qr">
+      <div class="grip"></div>
+      <div class="confirm-box">
+        <h3>Мой QR для оплаты</h3>
+        <div class="qr-grid" id="qr"></div>
+        <p id="qr-caption">Покажите код кассиру —<br>оплата спишется с баланса.</p>
+        <button class="btn ghost" onclick="closeSheets()">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- БИРЖА -->
+  <div class="screen" id="s-market">
+    <div class="hdr"><h1>Биржа юзернеймов</h1></div>
+    <div class="market-tabs">
+      <button class="mtab on" id="mt-my" onclick="marketTab('my')">Мои</button>
+      <button class="mtab" id="mt-all" onclick="marketTab('all')">Каталог</button>
+    </div>
+    <div class="scroll" id="market-my"></div>
+    <div class="scroll" id="market-all" style="display:none">
+      <div class="empty">
+        <div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg></div>
+        <b>Лотов пока нет</b>
+        <p>Когда пользователи выставят юзернеймы на продажу, они появятся здесь.</p>
+      </div>
+    </div>
+    <div class="tabbar">
+      <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
+      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab on" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
+      <button class="tab" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
+    </div>
+
+    <div class="sheet-veil" id="veil-market" onclick="closeSheets()"></div>
+    <div class="sheet" id="sheet-sell">
+      <div class="grip"></div>
+      <h3>Продать <span class="mono" id="sell-uname"></span></h3>
+      <p class="desc">Укажите цену. Лот появится в каталоге биржи.</p>
+      <div class="field" style="margin-bottom:12px">
+        <input type="number" placeholder="Цена" id="sell-price" inputmode="decimal">
+        <span class="mono" style="color:var(--ink-2)">₽</span>
+      </div>
+      <button class="btn" onclick="doSell()">Выставить на продажу</button>
+    </div>
+    <div class="sheet" id="sheet-claim">
+      <div class="grip"></div>
+      <h3>Занять юзернейм</h3>
+      <p class="desc">Свободный юзернейм займёт один из ваших слотов.</p>
+      <div class="field" style="margin-bottom:12px">
+        <span class="mono" style="color:var(--ink-2)">@</span>
+        <input type="text" placeholder="username" id="claim-uname" maxlength="20" autocapitalize="off">
+      </div>
+      <button class="btn" onclick="doClaim()">Занять</button>
+    </div>
+  </div>
+
+  <!-- ПРОФИЛЬ -->
+  <div class="screen" id="s-profile">
+    <div class="scroll">
+      <div class="profile-cover" id="p-cover"></div>
+      <div class="profile-top">
+        <div class="ava" id="p-ava"><span id="p-initial"></span><span class="status-emoji" id="p-status"></span></div>
+        <h2><span id="p-name"></span> <span class="vcheck" id="p-vcheck" style="display:none;width:19px;height:19px"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span></h2>
+        <div class="h mono" id="p-handle"></div>
+        <div class="dev-tag" id="p-devtag" style="display:none">Разработчик Newchat</div>
+      </div>
+
+      <div class="verify-cta" id="verify-cta" onclick="openSheet('sheet-verify')">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></div>
+        <div><b>Верификация</b><span>Для компаний, известных людей и разработчиков</span></div>
+      </div>
+
+      <div class="trust-card glass-card">
+        <div class="top">
+          <b>Батарейка доверия</b>
+          <span class="batt" style="color:var(--trust)">
+            <span class="batt-body"><span class="batt-fill" id="trust-fill"></span></span>
+            <span class="trust-val" id="trust-val"></span>
+          </span>
+        </div>
+        <p>Показывает честность аккаунта. Растёт от подтверждённых жалоб, снижается за ложные. Система отслеживает скорость подачи жалоб и связи между аккаунтами — накрутить не выйдет.</p>
+      </div>
+
+      <div class="plist">
+        <div class="pitem glass-card" onclick="openSheet('sheet-deco')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 100 18c1.5 0 2-1 2-2s-1-1.5-1-2.5 1-1.5 2.5-1.5H17a4 4 0 004-4c0-4.5-4-8-9-8z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="14.5" cy="7.5" r="1"/></svg>
+          Оформление профиля<div class="spacer"></div><span class="val">цвет · статус</span>
+        </div>
+        <div class="pitem glass-card" onclick="toast('Премиум скоро будет доступен')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1 3-6z"/></svg>
+          Newchat Premium<div class="spacer"></div><span class="prem-chip">5 СЛОТОВ</span>
+        </div>
+        <div class="pitem glass-card" onclick="go('s-wallet')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>
+          Кошелёк<div class="spacer"></div><span class="val mono" id="p-balance">0 ₽</span>
+        </div>
+        <div class="pitem glass-card" onclick="go('s-market');marketTab('my')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>
+          Мои юзернеймы<div class="spacer"></div><span class="val" id="p-unames">1 из 3</span>
+        </div>
+        <div class="pitem glass-card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+          Мои жалобы<div class="spacer"></div><span class="val" id="p-reports">0</span>
+        </div>
+        <div class="pitem glass-card" onclick="logout()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+          Выйти
+        </div>
+      </div>
+    </div>
+    <div class="tabbar">
+      <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
+      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
+      <button class="tab on" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
+    </div>
+
+    <div class="sheet-veil" id="veil-profile" onclick="closeSheets()"></div>
+
+    <div class="sheet" id="sheet-verify">
+      <div class="grip"></div>
+      <h3>Верификация</h3>
+      <p class="desc">Синяя галочка выдаётся официальным аккаунтам: компаниям, известным людям и разработчикам Newchat. Заявки рассматриваются командой вручную.</p>
+      <div class="deco-label">Кто вы</div>
+      <div class="cur-row">
+        <button class="cur-btn on" id="vt-company" onclick="setVType('company')" style="font-family:'Manrope';font-size:.8rem">🏢<small>Компания</small></button>
+        <button class="cur-btn" id="vt-public" onclick="setVType('public')" style="font-family:'Manrope';font-size:.8rem">⭐<small>Личность</small></button>
+        <button class="cur-btn" id="vt-dev" onclick="setVType('dev')" style="font-family:'Manrope';font-size:.8rem">🛠<small>Разработчик</small></button>
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <input type="text" class="txt" placeholder="Название / имя" id="v-name">
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <input type="text" class="txt" placeholder="Ссылка-подтверждение (сайт, соцсети)" id="v-proof">
+      </div>
+      <div class="law-note" style="margin-bottom:14px">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        Галочку «Разработчик» выдают только владельцы Newchat.
+      </div>
+      <button class="btn" onclick="submitVerify()">Отправить заявку</button>
+    </div>
+
+    <div class="sheet" id="sheet-deco">
+      <div class="grip"></div>
+      <h3>Оформление профиля</h3>
+      <p class="desc">Меняй профиль как хочешь — цвет обложки, аватар и эмодзи-статус.</p>
+      <div class="deco-label">Цвет обложки</div>
+      <div class="swatch-row" id="cover-row"></div>
+      <div class="deco-label">Цвет аватара</div>
+      <div class="swatch-row" id="ava-row"></div>
+      <div class="deco-label">Эмодзи-статус</div>
+      <div class="emoji-row" id="emoji-row"></div>
+      <button class="btn" style="margin-top:18px" onclick="closeSheets();toast('Оформление сохранено')">Готово</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+/* ============ ДАННЫЕ ============ */
+const RATES={rub:1,usd:91,aed:24.8};
+const SIGNS={rub:'₽',usd:'$',aed:'AED'};
+const COVERS=[
+  'linear-gradient(140deg,#8B7BE8,#5AA8F0)',
+  'linear-gradient(140deg,#F08F5A,#E84C7A)',
+  'linear-gradient(140deg,#18A85C,#7FD4F5)',
+  'linear-gradient(140deg,#D9A62E,#F5719F)',
+  'linear-gradient(140deg,#2B2D3A,#6C5CE7)'
+];
+const AVAS=[
+  'linear-gradient(135deg,#9C7BE8,#6A4BD0)',
+  'linear-gradient(135deg,#4ED692,#1FA463)',
+  'linear-gradient(135deg,#FF8A7E,#E0453C)',
+  'linear-gradient(135deg,#F5C64C,#E0862F)',
+  'linear-gradient(135deg,#3A3A4C,#1C1C26)'
+];
+const EMOJIS=['🔥','⚡','👑','🛡️','💎','🚀',''];
+const CHAT_COLORS=[
+  'linear-gradient(135deg,#9C7BE8,#6A4BD0)',
+  'linear-gradient(135deg,#4ED692,#1FA463)',
+  'linear-gradient(135deg,#5AB2F0,#2E86D9)',
+  'linear-gradient(135deg,#F5A64C,#E0752F)',
+  'linear-gradient(135deg,#F0719F,#D93A78)'
+];
+
+/* Безопасное хранилище: работает на GitHub Pages, не падает в песочницах */
+const store={
+  get(){try{return JSON.parse(localStorage.getItem('newchat')||'null')}catch(e){return window.__mem||null}},
+  set(v){try{localStorage.setItem('newchat',JSON.stringify(v))}catch(e){window.__mem=v}},
+  clear(){try{localStorage.removeItem('newchat')}catch(e){window.__mem=null}}
+};
+
+let S=store.get();      // состояние приложения
+let currentChat=null;   // id открытого чата
+let cur='rub';
+let vtype='company';
+let pendingPhone='';
+
+function save(){store.set(S)}
+function fmtRub(n){return n.toLocaleString('ru')+' ₽'}
+function now(){return new Date().toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+/* ============ НАВИГАЦИЯ ============ */
+function show(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  closeSheets();
+}
+function go(id){
+  show(id);
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===id));
+  if(id==='s-chats')renderChats();
+  if(id==='s-wallet')renderWallet();
+  if(id==='s-market')renderMarket();
+  if(id==='s-profile')renderProfile();
+}
+function openSheet(id){
+  const sheet=document.getElementById(id);
+  const screen=sheet.closest('.screen');
+  screen.querySelector('.sheet-veil').classList.add('show');
+  document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('show'));
+  sheet.classList.add('show');
+}
+function closeSheets(){
+  document.querySelectorAll('.sheet-veil').forEach(v=>v.classList.remove('show'));
+  document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('show'));
+}
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2300);
+}
+
+/* ============ ОНБОРДИНГ ============ */
+function authNext(){
+  const p=document.getElementById('auth-phone').value.replace(/\D/g,'');
+  const err=document.getElementById('auth-err');
+  if(p.length<10){err.style.display='block';return}
+  err.style.display='none';
+  pendingPhone='+7 '+p.slice(0,3)+' '+p.slice(3,6)+'-'+p.slice(6,8)+'-'+p.slice(8,10);
+  document.getElementById('code-phone').textContent=pendingPhone;
+  show('s-code');
+}
+function codeNext(){
+  const c=document.getElementById('auth-code').value.replace(/\D/g,'');
+  const err=document.getElementById('code-err');
+  if(c.length<5){err.style.display='block';return}
+  err.style.display='none';
+  show('s-setup');
+}
+function finishSetup(){
+  const name=document.getElementById('setup-name').value.trim();
+  const uname=document.getElementById('setup-uname').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+  const err=document.getElementById('setup-err');
+  if(!name||uname.length<3){err.style.display='block';return}
+  err.style.display='none';
+  S={
+    user:{name,phone:pendingPhone,cover:0,ava:0,status:'',verified:false,dev:false},
+    usernames:[{u:uname,main:true,forSale:false,price:0}],
+    chats:[],
+    balance:0,
+    history:[],
+    reports:0,
+    trust:100
+  };
+  // Сервисный чат Newchat — как официальный чат Telegram
+  S.chats.push({
+    id:'svc',
+    name:'Newchat',
+    uname:'newchat',
+    verified:true,
+    service:true,
+    color:'linear-gradient(135deg,#9788EA,#5B4BD4)',
+    msgs:[{out:false,text:'Добро пожаловать в Newchat, '+name+'! Здесь будут уведомления о жалобах, покупках и безопасности аккаунта.',time:now()}]
+  });
+  save();
+  boot();
+}
+function logout(){
+  if(!confirm('Выйти из аккаунта? Локальные данные будут удалены.'))return;
+  store.clear();S=null;
+  location.reload?location.reload():show('s-auth');
+}
+
+/* ============ ЧАТЫ ============ */
+function renderChats(){
+  const list=document.getElementById('chat-list');
+  if(!S.chats.length){
+    list.innerHTML='<div class="empty"><div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg></div><b>Пока нет чатов</b><p>Нажмите на карандаш, чтобы начать первую переписку.</p></div>';
+    return;
+  }
+  list.innerHTML=S.chats.map(c=>{
+    const last=c.msgs[c.msgs.length-1];
+    const check=c.verified?'<span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
+    return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+
+      '<div class="ava" style="background:'+c.color+'">'+esc(c.name[0].toUpperCase())+'</div>'+
+      '<div class="mid"><div class="name">'+esc(c.name)+' '+check+'</div>'+
+      '<div class="prev">'+(last?esc(last.text).slice(0,60):'')+'</div></div>'+
+      '<div class="end"><span class="time">'+(last?last.time:'')+'</span></div></div>';
+  }).join('');
+}
+function createChat(){
+  const inp=document.getElementById('nc-uname');
+  const u=inp.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+  if(u.length<3){toast('Юзернейм — минимум 3 символа');return}
+  if(u===S.usernames[0].u){toast('Это ваш собственный юзернейм');return}
+  let chat=S.chats.find(c=>c.uname===u);
+  if(!chat){
+    chat={
+      id:'c'+Date.now(),
+      name:'@'+u,
+      uname:u,
+      verified:false,
+      service:false,
+      color:CHAT_COLORS[S.chats.length%CHAT_COLORS.length],
+      msgs:[]
+    };
+    S.chats.unshift(chat);
+    save();
+  }
+  inp.value='';
+  closeSheets();
+  openChat(chat.id);
+}
+function openChat(id){
+  currentChat=id;
+  const c=S.chats.find(x=>x.id===id);
+  show('s-chat');
+  document.getElementById('chat-ava').style.background=c.color;
+  document.getElementById('chat-ava').textContent=c.name[0].toUpperCase();
+  document.getElementById('chat-name').innerHTML=esc(c.name)+(c.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'');
+  document.getElementById('chat-sub').textContent=c.service?'официальный аккаунт':'@'+c.uname;
+  document.getElementById('chat-menu-btn').style.display=c.service?'none':'flex';
+  renderMsgs(c);
+}
+function renderMsgs(c){
+  const box=document.getElementById('chat-msgs');
+  if(!c.msgs.length){
+    box.innerHTML='<div class="empty"><b>Нет сообщений</b><p>Напишите первым — сообщение появится здесь.</p></div>';
+    return;
+  }
+  box.innerHTML=c.msgs.map(m=>
+    '<div class="msg '+(m.out?'out':'in')+'">'+esc(m.text)+
+    '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+m.time+'</span></div>'
+  ).join('');
+  box.scrollTop=box.scrollHeight;
+}
+function sendMsg(){
+  const inp=document.getElementById('composer-input');
+  const text=inp.value.trim();
+  if(!text||!currentChat)return;
+  const c=S.chats.find(x=>x.id===currentChat);
+  c.msgs.push({out:true,text,time:now()});
+  save();
+  renderMsgs(c);
+  inp.value='';
+}
+document.getElementById('composer-input').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg()});
+
+/* ============ ЖАЛОБЫ ============ */
+function startReport(kind){
+  const c=S.chats.find(x=>x.id===currentChat);
+  document.getElementById('report-kind').textContent=kind;
+  document.getElementById('report-target').textContent=c.name;
+  openSheet('sheet-confirm');
+}
+function submitReport(){
+  openSheet('sheet-sent');
+  const bar=document.getElementById('pbar');
+  bar.style.width='0';
+  requestAnimationFrame(()=>{bar.style.width='100%'});
+  ['st1','st2','st3'].forEach((id,i)=>{
+    const el=document.getElementById(id);
+    el.classList.remove('done');
+    el.textContent='○ '+el.textContent.slice(2);
+    setTimeout(()=>{
+      el.textContent='✓ '+el.textContent.slice(2);
+      el.classList.add('done');
+    },500+i*550);
+  });
+  setTimeout(()=>{
+    S.reports++;
+    const c=S.chats.find(x=>x.id===currentChat);
+    const svc=S.chats.find(x=>x.id==='svc');
+    const num=4000+S.reports;
+    if(svc)svc.msgs.push({out:false,text:'Жалоба №'+num+' на '+c.name+' принята и передана в полицию. Статус можно отслеживать здесь.',time:now()});
+    save();
+    toast('Жалоба №'+num+' передана в полицию');
+  },2300);
+}
+
+/* ============ КОШЕЛЁК ============ */
+function renderWallet(){
+  document.getElementById('balance').textContent=fmtRub(S.balance);
+  document.getElementById('balance-conv').textContent=
+    '≈ '+(S.balance/RATES.usd).toFixed(1).replace('.',',')+' $ · '+(S.balance/RATES.aed).toFixed(1).replace('.',',')+' AED';
+  const h=document.getElementById('w-history');
+  if(!S.history.length){
+    h.innerHTML='<div class="empty" style="padding:40px 40px"><b>Операций пока нет</b><p>Пополните кошелёк — история появится здесь.</p></div>';
+    return;
+  }
+  h.innerHTML=S.history.map(op=>{
+    const plus=op.amt>0;
+    const ic=plus
+      ?'<div class="ic" style="background:var(--trust-soft);color:var(--trust)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>'
+      :'<div class="ic" style="background:var(--danger-soft);color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>';
+    return '<div class="w-item glass-card">'+ic+
+      '<div class="u"><div class="h">'+esc(op.title)+'</div><div class="p">'+esc(op.sub)+'</div></div>'+
+      '<div class="amt mono'+(plus?' plus':'')+'">'+(plus?'+':'−')+Math.abs(op.amt).toLocaleString('ru')+' ₽</div></div>';
+  }).join('');
+}
+function setCur(c){
+  cur=c;
+  ['rub','usd','aed'].forEach(x=>document.getElementById('cur-'+x).classList.toggle('on',x===c));
+  document.getElementById('cur-sign').textContent=SIGNS[c];
+  updConv();
+}
+function updConv(){
+  const v=parseFloat(document.getElementById('topup-amount').value)||0;
+  const rub=Math.round(v*RATES[cur]);
+  document.getElementById('conv-preview').innerHTML=
+    'На баланс поступит: <b class="mono">'+rub.toLocaleString('ru')+' ₽</b>'+
+    (cur!=='rub'&&v?'<br><span style="font-size:.72rem">курс: 1 '+SIGNS[cur]+' = '+RATES[cur]+' ₽</span>':'');
+}
+function doTopup(){
+  const v=parseFloat(document.getElementById('topup-amount').value)||0;
+  if(v<=0){toast('Введите сумму');return}
+  const rub=Math.round(v*RATES[cur]);
+  S.balance+=rub;
+  S.history.unshift({amt:rub,title:'Пополнение · '+SIGNS[cur],sub:cur==='rub'?'с карты':v+' '+SIGNS[cur]+' → конвертация в рубли'});
+  save();
+  document.getElementById('topup-amount').value='';
+  updConv();closeSheets();renderWallet();
+  toast('Кошелёк пополнен на '+fmtRub(rub));
+}
+function fmtCard(el){
+  el.value=el.value.replace(/\D/g,'').slice(0,16).replace(/(.{4})/g,'$1 ').trim();
+}
+function updWd(){
+  const v=parseFloat(document.getElementById('wd-amount').value)||0;
+  const out=Math.max(0,Math.round(v*0.99));
+  document.getElementById('wd-preview').innerHTML='Придёт на карту: <b class="mono">'+out.toLocaleString('ru')+' ₽</b>';
+}
+function doWithdraw(){
+  const card=document.getElementById('wd-card').value.replace(/\s/g,'');
+  const v=parseFloat(document.getElementById('wd-amount').value)||0;
+  if(card.length<16){toast('Введите номер карты полностью');return}
+  if(v<100){toast('Минимальная сумма — 100 ₽');return}
+  if(v>S.balance){toast('Недостаточно средств');return}
+  S.balance-=v;
+  S.history.unshift({amt:-v,title:'Вывод на карту •• '+card.slice(-4),sub:'комиссия 1%'});
+  save();
+  document.getElementById('wd-amount').value='';updWd();
+  closeSheets();renderWallet();
+  toast('Вывод '+fmtRub(v)+' на карту •• '+card.slice(-4));
+}
+
+/* ============ БИРЖА ============ */
+function renderMarket(){
+  const box=document.getElementById('market-my');
+  const max=3;
+  const used=S.usernames.length;
+  let dots='';
+  for(let i=0;i<3;i++)dots+='<div class="slot-dot'+(i<used?' full':'')+'"></div>';
+  dots+='<div class="slot-dot prem"></div><div class="slot-dot prem"></div>';
+  let html=
+    '<div class="slots-card glass-card"><div class="row"><b>Слоты юзернеймов</b>'+
+    '<span class="mono" style="font-size:.9rem">'+used+' / '+max+'</span></div>'+
+    '<div class="slots-dots">'+dots+'</div>'+
+    '<div class="hint">С премиумом — до 5 слотов <span class="prem-chip">PREMIUM</span></div></div>';
+  html+=S.usernames.map((u,i)=>{
+    const right=u.forSale
+      ?'<span class="tag-sale">В ПРОДАЖЕ</span><span class="price mono">'+u.price.toLocaleString('ru')+' ₽</span>'
+      :'<button class="pill-btn sell" onclick="openSell('+i+')">Продать</button>';
+    return '<div class="uname-card glass-card"><div class="u">'+
+      '<div class="h mono">@'+esc(u.u)+'</div>'+
+      '<div class="p">'+(u.main?'Основной юзернейм':'Дополнительный')+'</div></div>'+right+'</div>';
+  }).join('');
+  if(used<max){
+    html+='<div class="uname-card glass-card" style="justify-content:center;color:var(--ink-2);cursor:pointer;border-style:dashed" onclick="openSheet(\'sheet-claim\')">+ Занять юзернейм ('+(max-used)+' '+(max-used===1?'слот свободен':'слота свободно')+')</div>';
+  }
+  box.innerHTML=html;
+}
+let sellIndex=0;
+function openSell(i){
+  sellIndex=i;
+  document.getElementById('sell-uname').textContent='@'+S.usernames[i].u;
+  openSheet('sheet-sell');
+}
+function doSell(){
+  const p=parseFloat(document.getElementById('sell-price').value)||0;
+  if(p<=0){toast('Укажите цену');return}
+  S.usernames[sellIndex].forSale=true;
+  S.usernames[sellIndex].price=Math.round(p);
+  save();
+  document.getElementById('sell-price').value='';
+  closeSheets();renderMarket();
+  toast('@'+S.usernames[sellIndex].u+' выставлен на продажу');
+}
+function doClaim(){
+  const inp=document.getElementById('claim-uname');
+  const u=inp.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+  if(u.length<3){toast('Минимум 3 символа');return}
+  if(S.usernames.some(x=>x.u===u)){toast('Этот юзернейм уже у вас');return}
+  if(S.usernames.length>=3){toast('Все слоты заняты');return}
+  S.usernames.push({u,main:false,forSale:false,price:0});
+  save();
+  inp.value='';
+  closeSheets();renderMarket();
+  toast('@'+u+' занят');
+}
+function marketTab(which){
+  ['my','all'].forEach(t=>{
+    document.getElementById('mt-'+t).classList.toggle('on',t===which);
+    document.getElementById('market-'+t).style.display=t===which?'block':'none';
+  });
+}
+
+/* ============ ПРОФИЛЬ ============ */
+function renderProfile(){
+  const u=S.user;
+  document.getElementById('p-cover').style.background=COVERS[u.cover];
+  document.getElementById('p-ava').style.background=AVAS[u.ava];
+  document.getElementById('p-initial').textContent=u.name[0].toUpperCase();
+  document.getElementById('p-status').textContent=u.status;
+  document.getElementById('p-name').textContent=u.name;
+  document.getElementById('p-handle').textContent='@'+S.usernames[0].u+' · '+u.phone.replace(/\d{3}-\d{2}-(\d{2})$/,'•••-••-$1');
+  document.getElementById('p-vcheck').style.display=u.verified?'inline-flex':'none';
+  document.getElementById('p-devtag').style.display=u.dev?'block':'none';
+  document.getElementById('verify-cta').style.display=u.verified?'none':'flex';
+  document.getElementById('p-balance').textContent=fmtRub(S.balance);
+  document.getElementById('p-unames').textContent=S.usernames.length+' из 3';
+  document.getElementById('p-reports').textContent=S.reports;
+  document.getElementById('trust-fill').style.width=S.trust+'%';
+  document.getElementById('trust-val').textContent=S.trust+'%';
+  renderDeco();
+}
+function renderDeco(){
+  document.getElementById('cover-row').innerHTML=COVERS.map((c,i)=>
+    '<div class="swatch'+(S.user.cover===i?' on':'')+'" style="background:'+c+'" onclick="setCover('+i+')"></div>').join('');
+  document.getElementById('ava-row').innerHTML=AVAS.map((c,i)=>
+    '<div class="swatch'+(S.user.ava===i?' on':'')+'" style="background:'+c+'" onclick="setAvaC('+i+')"></div>').join('');
+  document.getElementById('emoji-row').innerHTML=EMOJIS.map(e=>
+    '<div class="emoji-opt'+(S.user.status===e?' on':'')+'" onclick="setStatus(\''+e+'\')">'+(e||'✕')+'</div>').join('');
+}
+function setCover(i){S.user.cover=i;save();renderProfile()}
+function setAvaC(i){S.user.ava=i;save();renderProfile()}
+function setStatus(e){S.user.status=e;save();renderProfile()}
+function setVType(t){
+  vtype=t;
+  ['company','public','dev'].forEach(x=>document.getElementById('vt-'+x).classList.toggle('on',x===t));
+}
+function submitVerify(){
+  const name=document.getElementById('v-name').value.trim();
+  if(!name){toast('Укажите название или имя');return}
+  closeSheets();
+  const svc=S.chats.find(x=>x.id==='svc');
+  const labels={company:'компании',public:'известной личности',dev:'разработчика'};
+  if(svc){svc.msgs.push({out:false,text:'Заявка на верификацию '+labels[vtype]+' («'+name+'») принята. Команда рассмотрит её вручную.',time:now()});save()}
+  toast('Заявка на верификацию отправлена');
+}
+
+/* ============ QR ============ */
+(function(){
+  const qr=document.getElementById('qr');
+  let seed=Date.now()%99991;
+  const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280};
+  for(let i=0;i<49;i++){
+    const cell=document.createElement('i');
+    if(rnd()<0.42)cell.classList.add('o');
+    qr.appendChild(cell);
+  }
+})();
+
+/* ============ СТАРТ ============ */
+function boot(){
+  if(S&&S.user){go('s-chats')}
+  else{show('s-auth')}
+}
+boot();
+</script>
+</body>
+</html>
