@@ -22,6 +22,13 @@ const DEV_USERNAMES = (process.env.DEV_USERNAMES || 'shadow')
 const SMSRU_API_ID = process.env.SMSRU_API_ID || '';
 const SMS_ENABLED = !!SMSRU_API_ID;
 
+/* Telegram-бот для подтверждения номера. Бесплатно и без лимитов. */
+const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TG_BOT_NAME = (process.env.TELEGRAM_BOT_USERNAME || '').replace('@', '');
+const TG_ENABLED = !!(TG_TOKEN && TG_BOT_NAME);
+const TG_SECRET = crypto.randomBytes(16).toString('hex');
+const PUBLIC_URL = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
+
 /* ================= ХРАНИЛИЩЕ ================= */
 
 let db = {
@@ -32,7 +39,8 @@ let db = {
   reports: [],    // жалобы
   verifyRequests: [],
   tokens: {},     // token -> userId
-  codes: {}       // phone -> { code, expires }
+  codes: {},      // phone -> { code, expires }
+  tgSessions: {}  // session -> { created, chatId, status, token, needsSetup }
 };
 
 function load() {
@@ -176,6 +184,163 @@ function serviceMessage(userId, text) {
   db.chats[id].msgs.push(msg);
   save();
   push(userId, { type: 'message', chatId: id, message: { id: msg.id, text, time: msg.time, out: false } });
+}
+
+/* ================= TELEGRAM-БОТ ================= */
+
+async function tg(method, params) {
+  if (!TG_ENABLED) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params || {}),
+      signal: AbortSignal.timeout(15000)
+    });
+    return await res.json();
+  } catch (e) {
+    console.error('Telegram ' + method + ':', e.message);
+    return null;
+  }
+}
+
+/* Выдаём токен входа по подтверждённому номеру */
+function loginByPhone(phone10, tgId) {
+  let user = Object.values(db.users).find(u => u.phone === phone10);
+  const token = crypto.randomBytes(24).toString('hex');
+
+  if (!user) {
+    const id = uid();
+    user = {
+      id, phone: phone10, name: '', username: '',
+      cover: 0, ava: 0, status: '',
+      verified: false, dev: false,
+      balance: 0, trust: 100, createdAt: now(),
+      telegramId: tgId || null
+    };
+    db.users[id] = user;
+  } else if (tgId) {
+    user.telegramId = tgId;
+  }
+
+  db.tokens[token] = user.id;
+  save();
+  return { token, user };
+}
+
+/* Обработка сообщений, которые присылает бот */
+async function handleTelegramUpdate(update) {
+  const msg = update && update.message;
+  if (!msg || !msg.chat) return;
+
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+
+  /* Шаг 1: человек нажал «Старт» по ссылке из приложения */
+  if (text.startsWith('/start')) {
+    const session = text.split(' ')[1];
+
+    if (session && db.tgSessions[session]) {
+      db.tgSessions[session].chatId = chatId;
+      save();
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: 'Чтобы войти в Newchat, подтвердите свой номер телефона.\n\nНажмите кнопку ниже — Telegram передаст номер сам, вводить ничего не нужно.',
+        reply_markup: {
+          keyboard: [[{ text: '📱 Подтвердить номер', request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true
+        }
+      });
+    } else {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: 'Это бот входа в Newchat.\n\nОткройте приложение и нажмите «Войти через Telegram» — я пришлю кнопку подтверждения.'
+      });
+    }
+    return;
+  }
+
+  /* Шаг 2: человек поделился контактом */
+  if (msg.contact) {
+    /* Важно: принимаем только собственный контакт, а не пересланный чужой */
+    if (msg.contact.user_id !== msg.from.id) {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: 'Это чужой контакт. Нажмите кнопку «Подтвердить номер» — она передаёт именно ваш.'
+      });
+      return;
+    }
+
+    const session = Object.keys(db.tgSessions)
+      .find(s => db.tgSessions[s].chatId === chatId && db.tgSessions[s].status === 'pending');
+
+    if (!session) {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: 'Срок входа истёк. Откройте приложение и попробуйте снова.',
+        reply_markup: { remove_keyboard: true }
+      });
+      return;
+    }
+
+    const phone = normPhone(msg.contact.phone_number);
+    const { token, user } = loginByPhone(phone, msg.from.id);
+
+    db.tgSessions[session].status = 'ok';
+    db.tgSessions[session].token = token;
+    db.tgSessions[session].needsSetup = !user.username;
+    save();
+
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: '✅ Номер подтверждён. Возвращайтесь в приложение — вход выполнен.',
+      reply_markup: { remove_keyboard: true }
+    });
+  }
+}
+
+/* Получение обновлений: вебхук на хостинге, опрос при локальном запуске */
+async function startTelegram() {
+  if (!TG_ENABLED) {
+    console.log('Telegram-бот не настроен');
+    return;
+  }
+
+  const me = await tg('getMe');
+  if (!me || !me.ok) {
+    console.error('Неверный токен Telegram-бота');
+    return;
+  }
+  console.log('Telegram-бот подключён: @' + me.result.username);
+
+  if (PUBLIC_URL) {
+    const r = await tg('setWebhook', {
+      url: PUBLIC_URL + '/telegram/webhook',
+      secret_token: TG_SECRET,
+      allowed_updates: ['message'],
+      drop_pending_updates: true
+    });
+    console.log('Вебхук установлен:', r && r.ok);
+  } else {
+    await tg('deleteWebhook', { drop_pending_updates: true });
+    console.log('Режим опроса Telegram');
+    let offset = 0;
+    (async function poll() {
+      for (;;) {
+        try {
+          const r = await tg('getUpdates', { offset, timeout: 25, allowed_updates: ['message'] });
+          if (r && r.ok) {
+            for (const u of r.result) {
+              offset = u.update_id + 1;
+              await handleTelegramUpdate(u);
+            }
+          }
+        } catch (e) { }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    })();
+  }
 }
 
 /* ================= WEBSOCKET ================= */
@@ -558,6 +723,62 @@ route('POST', '/api/verify/request', async (req, res, body, user) => {
   send(res, 200, { ok: true });
 });
 
+/* ---------- Вход через Telegram ---------- */
+
+route('GET', '/api/config', async (req, res) => {
+  send(res, 200, {
+    telegram: TG_ENABLED,
+    botName: TG_BOT_NAME,
+    sms: SMS_ENABLED
+  });
+});
+
+route('POST', '/api/auth/telegram/start', async (req, res) => {
+  if (!TG_ENABLED) return send(res, 400, { error: 'Вход через Telegram не настроен' });
+
+  /* Чистим сессии старше 15 минут */
+  const cutoff = now() - 15 * 60e3;
+  for (const s of Object.keys(db.tgSessions)) {
+    if (db.tgSessions[s].created < cutoff) delete db.tgSessions[s];
+  }
+
+  const session = crypto.randomBytes(12).toString('hex');
+  db.tgSessions[session] = { created: now(), chatId: null, status: 'pending', token: null };
+  save();
+
+  send(res, 200, {
+    session,
+    link: `https://t.me/${TG_BOT_NAME}?start=${session}`
+  });
+});
+
+route('POST', '/api/auth/telegram/check', async (req, res, body) => {
+  const rec = db.tgSessions[String(body.session || '')];
+  if (!rec) return send(res, 404, { error: 'Сессия не найдена, начните заново' });
+  if (rec.created < now() - 15 * 60e3) return send(res, 400, { error: 'Время вышло, начните заново' });
+  if (rec.status !== 'ok') return send(res, 200, { status: 'pending' });
+
+  const user = db.users[db.tokens[rec.token]];
+  const token = rec.token;
+  delete db.tgSessions[String(body.session)];
+  save();
+
+  send(res, 200, {
+    status: 'ok',
+    token,
+    needsSetup: !user.username,
+    state: user.username ? fullState(user) : null
+  });
+});
+
+route('POST', '/telegram/webhook', async (req, res, body) => {
+  if (req.headers['x-telegram-bot-api-secret-token'] !== TG_SECRET) {
+    return send(res, 403, { error: 'forbidden' });
+  }
+  send(res, 200, { ok: true });
+  handleTelegramUpdate(body).catch(e => console.error('Ошибка обработки:', e.message));
+});
+
 /* ---------- Служебное ---------- */
 
 route('GET', '/api/health', async (req, res) => {
@@ -566,7 +787,15 @@ route('GET', '/api/health', async (req, res) => {
 
 /* ================= СЕРВЕР ================= */
 
-const OPEN_ROUTES = ['POST /api/auth/request', 'POST /api/auth/verify', 'GET /api/health'];
+const OPEN_ROUTES = [
+  'POST /api/auth/request',
+  'POST /api/auth/verify',
+  'POST /api/auth/telegram/start',
+  'POST /api/auth/telegram/check',
+  'POST /telegram/webhook',
+  'GET /api/config',
+  'GET /api/health'
+];
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
@@ -626,4 +855,7 @@ setInterval(() => {
 }, 30000);
 
 load();
-server.listen(PORT, () => console.log('Newchat-сервер запущен на порту ' + PORT));
+server.listen(PORT, () => {
+  console.log('Newchat-сервер запущен на порту ' + PORT);
+  startTelegram();
+});

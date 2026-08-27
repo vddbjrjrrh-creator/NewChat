@@ -137,6 +137,14 @@ body{
   border:1px solid var(--edge);margin-top:10px;font-weight:700;
 }
 .btn.danger{background:linear-gradient(135deg,#FF7A6E,#E0453C);box-shadow:0 10px 28px rgba(232,69,60,.3)}
+.btn.tg{
+  background:linear-gradient(135deg,#5FC6F5,#2288CC);
+  box-shadow:0 10px 28px rgba(34,136,204,.32), inset 0 1px 0 rgba(255,255,255,.35);
+}
+@keyframes slide{
+  0%{transform:translateX(-100%)}
+  100%{transform:translateX(100%)}
+}
 .auth-note{font-size:.74rem;color:var(--ink-2);text-align:center;margin-top:22px;line-height:1.55}
 
 /* ===== Пустые состояния ===== */
@@ -479,17 +487,42 @@ body{
       </div>
       <h2>Newchat</h2>
       <p class="sub">Мессенджер, где скамеры и доксеры<br>отвечают по закону.</p>
-      <div class="field">
-        <span class="mono" style="color:var(--ink-2)">+7</span>
-        <input type="tel" placeholder="900 000-00-00" id="auth-phone" maxlength="15" inputmode="tel">
+
+      <button class="btn tg" id="tg-btn" onclick="tgLogin()" style="display:none">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20" style="vertical-align:-4px;margin-right:8px"><path d="M21.9 4.3l-3 14.2c-.2 1-.8 1.3-1.7.8l-4.6-3.4-2.2 2.1c-.2.2-.5.5-1 .5l.3-4.7 8.5-7.7c.4-.3-.1-.5-.6-.2L6.2 12.5 1.6 11c-1-.3-1-1 .2-1.5l19-7.3c.8-.3 1.5.2 1.1 2.1z"/></svg>
+        Войти через Telegram
+      </button>
+
+      <div class="or" id="auth-or" style="display:none">или по номеру</div>
+
+      <div id="phone-block">
+        <div class="field">
+          <span class="mono" style="color:var(--ink-2)">+7</span>
+          <input type="tel" placeholder="900 000-00-00" id="auth-phone" maxlength="15" inputmode="tel">
+        </div>
+        <div class="field-err" id="auth-err">Введите номер телефона</div>
+        <div class="law-note" id="no-server" style="display:none;margin-bottom:12px">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+          Сервер не подключён. Впишите его адрес в переменную SERVER в файле index.html.
+        </div>
+        <button class="btn" onclick="authNext()">Продолжить</button>
       </div>
-      <div class="field-err" id="auth-err">Введите номер телефона</div>
-      <div class="law-note" id="no-server" style="display:none;margin-bottom:12px">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
-        Сервер не подключён. Впишите его адрес в переменную SERVER в файле index.html.
-      </div>
-      <button class="btn" onclick="authNext()">Продолжить</button>
+
       <p class="auth-note">Продолжая, вы соглашаетесь с правилами.<br>Жалобы «Докс» и «Скам» передаются в полицию.</p>
+    </div>
+  </div>
+
+  <!-- ОЖИДАНИЕ ПОДТВЕРЖДЕНИЯ В TELEGRAM -->
+  <div class="screen onb" id="s-tgwait">
+    <div>
+      <div class="logo-orb" style="background:radial-gradient(circle at 32% 28%, #5FC6F5, #2288CC 72%);box-shadow:0 16px 44px rgba(34,136,204,.35), inset 0 2px 6px rgba(255,255,255,.5)">
+        <svg viewBox="0 0 24 24" fill="#fff" width="42" height="42"><path d="M21.9 4.3l-3 14.2c-.2 1-.8 1.3-1.7.8l-4.6-3.4-2.2 2.1c-.2.2-.5.5-1 .5l.3-4.7 8.5-7.7c.4-.3-.1-.5-.6-.2L6.2 12.5 1.6 11c-1-.3-1-1 .2-1.5l19-7.3c.8-.3 1.5.2 1.1 2.1z"/></svg>
+      </div>
+      <h2 style="font-size:1.4rem">Ждём подтверждения</h2>
+      <p class="sub">В Telegram откроется наш бот.<br>Нажмите <b>«Старт»</b>, затем кнопку<br><b>«📱 Подтвердить номер»</b>.</p>
+      <div class="progress-line" style="margin:0 0 20px"><i style="width:100%;animation:slide 1.4s infinite"></i></div>
+      <button class="btn" onclick="openTgLink()">Открыть Telegram</button>
+      <button class="btn ghost" onclick="cancelTg()">Отмена</button>
     </div>
   </div>
 
@@ -1024,6 +1057,58 @@ async function finishSetup(){
     S=r.state;connectWS();go('s-chats');
   }catch(e){}
 }
+/* ============ ВХОД ЧЕРЕЗ TELEGRAM ============ */
+let tgSession=null;
+let tgLink='';
+let tgPoll=null;
+
+async function loadConfig(){
+  try{
+    const cfg=await api('/api/config');
+    if(cfg.telegram){
+      document.getElementById('tg-btn').style.display='block';
+      document.getElementById('auth-or').style.display='flex';
+      /* Если SMS не подключены, вход по номеру только запутает — прячем */
+      document.getElementById('phone-block').style.display=cfg.sms?'block':'none';
+      document.getElementById('auth-or').style.display=cfg.sms?'flex':'none';
+    }
+  }catch(e){}
+}
+async function tgLogin(){
+  try{
+    const r=await api('/api/auth/telegram/start',{});
+    tgSession=r.session;
+    tgLink=r.link;
+    show('s-tgwait');
+    openTgLink();
+    startTgPoll();
+  }catch(e){}
+}
+function openTgLink(){
+  if(tgLink)window.open(tgLink,'_blank');
+}
+function startTgPoll(){
+  clearInterval(tgPoll);
+  let tries=0;
+  tgPoll=setInterval(async()=>{
+    if(++tries>200){clearInterval(tgPoll);return}
+    try{
+      const r=await api('/api/auth/telegram/check',{session:tgSession});
+      if(r.status==='ok'){
+        clearInterval(tgPoll);
+        token=r.token;tokenStore.set(token);
+        if(r.needsSetup){show('s-setup')}
+        else{S=r.state;connectWS();go('s-chats')}
+      }
+    }catch(e){clearInterval(tgPoll);show('s-auth')}
+  },2000);
+}
+function cancelTg(){
+  clearInterval(tgPoll);
+  tgSession=null;
+  show('s-auth');
+}
+
 let resendTimer=null;
 function startResendTimer(){
   const btn=document.getElementById('resend-btn');
@@ -1430,11 +1515,11 @@ async function boot(){
     document.getElementById('no-server').style.display='block';
     return;
   }
-  if(!token){show('s-auth');return}
+  if(!token){show('s-auth');loadConfig();return}
   try{
     const r=await api('/api/state');
     S=r.state;connectWS();go('s-chats');
-  }catch(e){show('s-auth')}
+  }catch(e){show('s-auth');loadConfig()}
 }
 boot();
 </script>
