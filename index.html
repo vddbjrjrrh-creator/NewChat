@@ -584,9 +584,9 @@ body{
   <!-- ЧАТЫ -->
   <div class="screen" id="s-chats">
     <div class="hdr"><h1>Чаты</h1><div class="spacer"></div></div>
-    <div class="search-pill glass">
+    <div class="search-pill glass" onclick="openSearch()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      Поиск
+      Поиск людей, каналов и ботов
     </div>
     <div class="scroll" id="chat-list"></div>
     <button class="fab" onclick="openSheet('sheet-newchat')" title="Новый чат">
@@ -594,7 +594,7 @@ body{
     </button>
     <div class="tabbar">
       <button class="tab on" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
-      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Сделки</button>
       <button class="tab" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
       <button class="tab" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
     </div>
@@ -602,13 +602,52 @@ body{
     <div class="sheet-veil" id="veil-chats" onclick="closeSheets()"></div>
     <div class="sheet" id="sheet-newchat">
       <div class="grip"></div>
-      <h3>Новый чат</h3>
-      <p class="desc">Введите юзернейм собеседника, чтобы начать переписку.</p>
-      <div class="field">
+      <h3>Создать</h3>
+      <button class="report-opt" onclick="closeSheets();openSearch()">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+        <span><b>Найти собеседника</b><span>Поиск по имени или юзернейму</span></span>
+      </button>
+      <button class="report-opt" onclick="closeSheets();openSheet('sheet-newchannel')">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M3 11l14-5v12L3 13v-2z"/><path d="M17 8a4 4 0 010 8"/></svg></span>
+        <span><b>Создать канал</b><span>Посты для подписчиков, пишет только владелец</span></span>
+      </button>
+      <button class="report-opt" onclick="closeSheets();go('s-profile');setTimeout(()=>openSheet('sheet-bots'),150)">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M12 7V4M8 12h.01M16 12h.01M9 15.5c1.8 1 4.2 1 6 0"/></svg></span>
+        <span><b>Создать бота</b><span>Токен и API — как в BotFather</span></span>
+      </button>
+      <div class="field" style="margin-top:8px">
         <span class="mono" style="color:var(--ink-2)">@</span>
-        <input type="text" placeholder="username" id="nc-uname" maxlength="20" autocapitalize="off">
+        <input type="text" placeholder="или юзернейм напрямую" id="nc-uname" maxlength="20" autocapitalize="off">
       </div>
       <button class="btn" onclick="createChat()">Начать чат</button>
+    </div>
+
+    <div class="sheet" id="sheet-newchannel">
+      <div class="grip"></div>
+      <h3>Новый канал</h3>
+      <p class="desc">В канале пишете только вы, подписчики читают. До 5 каналов на аккаунт.</p>
+      <div class="field" style="margin-bottom:12px">
+        <input type="text" class="txt" placeholder="Название канала" id="ch-title" maxlength="40">
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <span class="mono" style="color:var(--ink-2)">@</span>
+        <input type="text" placeholder="юзернейм (не обязательно)" id="ch-uname" maxlength="20" autocapitalize="off">
+      </div>
+      <button class="btn" onclick="createChannel()">Создать канал</button>
+    </div>
+  </div>
+
+  <!-- ПОИСК -->
+  <div class="screen" id="s-search">
+    <div class="hdr">
+      <button class="icon-btn" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="22" height="22"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="field" style="flex:1;margin:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="color:var(--ink-2)"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input type="text" placeholder="Имя, @юзернейм, канал…" id="search-input" autocapitalize="off">
+      </div>
+    </div>
+    <div class="scroll" id="search-results">
+      <div class="empty"><div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div><b>Кого ищем?</b><p>Введите минимум 2 символа — найдём людей, каналы и ботов.</p></div>
     </div>
   </div>
 
@@ -678,89 +717,49 @@ body{
 
   <!-- КОШЕЛЁК -->
   <div class="screen" id="s-wallet">
-    <div class="hdr"><h1>Кошелёк</h1></div>
+    <div class="hdr"><h1>Сделки</h1></div>
     <div class="scroll">
-      <div class="wallet-hero">
-        <div class="lbl">БАЛАНС</div>
-        <div class="amount mono" id="balance">0 ₽</div>
-        <div class="conv" id="balance-conv">≈ 0 $ · 0 AED</div>
-        <div class="wallet-actions">
-          <button class="wa-btn" onclick="openSheet('sheet-topup')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            Пополнить
-          </button>
-          <button class="wa-btn" onclick="openWithdraw()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-            На карту
-          </button>
-          <button class="wa-btn" onclick="openSheet('sheet-nfc')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a8 8 0 010 8M9.5 9.5a4.5 4.5 0 010 5M13 11a1.5 1.5 0 010 2" stroke-linecap="round"/></svg>
-            NFC
-          </button>
-          <button class="wa-btn" onclick="openSheet('sheet-qr')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM19 19h2"/></svg>
-            QR
-          </button>
-        </div>
+      <div class="law-note" style="margin-bottom:14px">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        Деньги идут напрямую от покупателя продавцу — банк в банк. Newchat не хранит деньги: на время сделки замораживается сам юзернейм.
       </div>
+      <div id="req-card"></div>
+      <div class="w-section">Активные сделки</div>
+      <div id="deals-active"></div>
       <div class="w-section">История</div>
       <div id="w-history"></div>
       <div style="height:12px"></div>
     </div>
     <div class="tabbar">
       <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
-      <button class="tab on" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab on" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Сделки</button>
       <button class="tab" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
       <button class="tab" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
     </div>
 
     <div class="sheet-veil" id="veil-wallet" onclick="closeSheets()"></div>
 
-    <div class="sheet" id="sheet-topup">
+    <div class="sheet" id="sheet-req">
       <div class="grip"></div>
-      <h3>Пополнить кошелёк</h3>
-      <p class="desc">Деньги зачислятся после подтверждения банком.</p>
+      <h3>Реквизиты для продаж</h3>
+      <p class="desc">Их увидит покупатель ваших юзернеймов и переведёт деньги напрямую вам. Newchat к переводу не прикасается.</p>
       <div class="cur-row">
-        <button class="cur-btn on" id="pm-sbp" onclick="setMethod('sbp')" style="font-family:'Manrope';font-size:.85rem">СБП<small>Быстрые платежи</small></button>
-        <button class="cur-btn" id="pm-card" onclick="setMethod('card')" style="font-family:'Manrope';font-size:.85rem">Карта<small>Visa · MIR · MC</small></button>
+        <button class="cur-btn on" id="rq-sbp" onclick="setReqKind('sbp')" style="font-family:'Manrope';font-size:.85rem">СБП<small>по телефону</small></button>
+        <button class="cur-btn" id="rq-card" onclick="setReqKind('card')" style="font-family:'Manrope';font-size:.85rem">Карта<small>по номеру</small></button>
       </div>
       <div class="field" style="margin-bottom:12px">
-        <input type="number" placeholder="Сумма от 100 ₽" id="topup-amount" inputmode="decimal">
-        <span class="mono" style="color:var(--ink-2)">₽</span>
+        <input type="text" placeholder="+7 900 000-00-00" id="req-value" inputmode="tel">
       </div>
-      <div class="law-note" style="margin-bottom:14px">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
-        Вывести деньги можно будет только на тот счёт, с которого пополняли.
+      <div class="field" style="margin-bottom:12px" id="req-bank-field">
+        <input type="text" class="txt" placeholder="Банк (например, Т-Банк)" id="req-bank" maxlength="30">
       </div>
-      <button class="btn" onclick="doTopup()">Перейти к оплате</button>
+      <button class="btn" onclick="saveReq()">Сохранить</button>
+      <button class="btn ghost" id="req-del-btn" style="display:none" onclick="deleteReq()">Удалить реквизиты</button>
     </div>
 
-    <div class="sheet" id="sheet-withdraw">
+    <div class="sheet" id="sheet-deal">
       <div class="grip"></div>
-      <h3>Вывод денег</h3>
-      <div id="wd-body">Загрузка…</div>
-    </div>
-
-    <div class="sheet" id="sheet-nfc">
-      <div class="grip"></div>
-      <div class="confirm-box">
-        <h3>Оплата через NFC</h3>
-        <div class="nfc-wave">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M6 8a8 8 0 010 8M10 9.5a4.5 4.5 0 010 5M13.5 11a1.8 1.8 0 010 2"/></svg>
-        </div>
-        <p>Ожидание терминала…<br>Поднесите телефон к терминалу в магазине — спишется с баланса в рублях.</p>
-        <button class="btn ghost" onclick="closeSheets()">Закрыть</button>
-      </div>
-    </div>
-
-    <div class="sheet" id="sheet-qr">
-      <div class="grip"></div>
-      <div class="confirm-box">
-        <h3>Мой QR для оплаты</h3>
-        <div class="qr-grid" id="qr"></div>
-        <p id="qr-caption">Покажите код кассиру —<br>оплата спишется с баланса.</p>
-        <button class="btn ghost" onclick="closeSheets()">Закрыть</button>
-      </div>
+      <div id="deal-body"></div>
     </div>
   </div>
 
@@ -781,7 +780,7 @@ body{
     </div>
     <div class="tabbar">
       <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
-      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Сделки</button>
       <button class="tab on" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
       <button class="tab" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
     </div>
@@ -796,6 +795,10 @@ body{
         <span class="mono" style="color:var(--ink-2)">₽</span>
       </div>
       <button class="btn" onclick="doSell()">Выставить на продажу</button>
+    </div>
+    <div class="sheet" id="sheet-buy">
+      <div class="grip"></div>
+      <div id="buy-body"></div>
     </div>
     <div class="sheet" id="sheet-claim">
       <div class="grip"></div>
@@ -814,7 +817,9 @@ body{
     <div class="scroll">
       <div class="profile-cover" id="p-cover"></div>
       <div class="profile-top">
-        <div class="ava" id="p-ava"><span id="p-initial"></span><span class="status-emoji" id="p-status"></span></div>
+        <div class="ava" id="p-ava" onclick="document.getElementById('ava-file').click()" style="cursor:pointer;background-size:cover;background-position:center"><span id="p-initial"></span><span class="status-emoji" id="p-status"></span></div>
+        <input type="file" id="ava-file" accept="image/*" style="display:none" onchange="uploadAvatar(this)">
+        <div class="val" style="font-size:.72rem;color:var(--ink-2);margin-top:4px">нажмите на аватар, чтобы поставить фото</div>
         <h2><span id="p-name"></span> <span class="vcheck" id="p-vcheck" style="display:none;width:19px;height:19px"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span></h2>
         <div class="h mono" id="p-handle"></div>
         <div class="dev-tag" id="p-devtag" style="display:none">Разработчик Newchat</div>
@@ -847,7 +852,11 @@ body{
         </div>
         <div class="pitem glass-card" onclick="go('s-wallet')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>
-          Кошелёк<div class="spacer"></div><span class="val mono" id="p-balance">0 ₽</span>
+          Сделки<div class="spacer"></div><span class="val" id="p-deals">0</span>
+        </div>
+        <div class="pitem glass-card" onclick="openBots()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M12 7V4M8 12h.01M16 12h.01M9 15.5c1.8 1 4.2 1 6 0"/></svg>
+          Мои боты<div class="spacer"></div><span class="val" id="p-bots">0 из 3</span>
         </div>
         <div class="pitem glass-card" onclick="go('s-market');marketTab('my')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>
@@ -865,7 +874,7 @@ body{
     </div>
     <div class="tabbar">
       <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
-      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Кошелёк</button>
+      <button class="tab" data-t="s-wallet" onclick="go('s-wallet')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M16 12h.01M3 10h18"/></svg>Сделки</button>
       <button class="tab" data-t="s-market" onclick="go('s-market')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg>Биржа</button>
       <button class="tab on" data-t="s-profile" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Профиль</button>
     </div>
@@ -918,6 +927,21 @@ body{
       <div class="emoji-row" id="emoji-row"></div>
       <button class="btn" style="margin-top:18px" onclick="closeSheets();toast('Оформление сохранено')">Готово</button>
     </div>
+
+    <div class="sheet" id="sheet-bots">
+      <div class="grip"></div>
+      <h3>Мои боты</h3>
+      <p class="desc">Создайте бота — получите токен. Ваш код опрашивает <span class="mono">/api/bot/&lt;токен&gt;/updates</span> и отвечает через <span class="mono">/api/bot/&lt;токен&gt;/send</span>.</p>
+      <div id="bots-list"></div>
+      <div class="field" style="margin:12px 0">
+        <input type="text" class="txt" placeholder="Имя бота" id="bot-name" maxlength="30">
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <span class="mono" style="color:var(--ink-2)">@</span>
+        <input type="text" placeholder="username, кончается на bot" id="bot-uname" maxlength="20" autocapitalize="off">
+      </div>
+      <button class="btn" onclick="createBot()">Создать бота</button>
+    </div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -931,8 +955,6 @@ const SERVER = 'https://newchat-server1.onrender.com';
 const API = SERVER.replace(/\/$/, '');
 const WS_URL = API.replace(/^http/, 'ws') + '/ws';
 
-const RATES={rub:1,usd:91,aed:24.8};
-const SIGNS={rub:'₽',usd:'$',aed:'AED'};
 const COVERS=[
   'linear-gradient(140deg,#8B7BE8,#5AA8F0)',
   'linear-gradient(140deg,#F08F5A,#E84C7A)',
@@ -964,20 +986,38 @@ const tokenStore={
 };
 
 let token=tokenStore.get();
+/* Пришли по ссылке друга — запоминаем, чтобы засчитать приглашение */
+try{
+  const ref=new URLSearchParams(location.search).get('ref');
+  if(ref)localStorage.setItem('newchat_ref',ref);
+}catch(e){}
 let S=null;             // состояние с сервера
 let currentChat=null;
-let cur='rub';
 let vtype='company';
 let pendingPhone='';
 let ws=null;
 let sellUname='';
 
-function fmtRub(n){return (n||0).toLocaleString('ru')+' ₽'}
 function fmtTime(ts){return new Date(ts).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
 function colorFor(str){
   let h=0;for(let i=0;i<str.length;i++)h=(h*31+str.charCodeAt(i))%CHAT_COLORS.length;
   return CHAT_COLORS[h];
+}
+/* Кружок собеседника: фото, если есть, иначе цвет с буквой */
+function avaHtml(peer,extra){
+  extra=extra||'';
+  const p=peer||{};
+  if(p.photo)return '<div class="ava" '+extra+' style="background-image:url('+p.photo+');background-size:cover;background-position:center"></div>';
+  const color=p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?'));
+  return '<div class="ava" '+extra+' style="background:'+color+'">'+esc((p.name||'?')[0].toUpperCase())+'</div>';
+}
+function fmtLeft(ms){
+  if(ms<=0)return 'меньше минуты';
+  const d=Math.floor(ms/86400e3),h=Math.floor(ms%86400e3/3600e3),m=Math.floor(ms%3600e3/60e3);
+  if(d>0)return d+' дн. '+h+' ч.';
+  if(h>0)return h+' ч. '+m+' мин.';
+  return m+' мин.';
 }
 
 /* ============ ЗАПРОСЫ К СЕРВЕРУ ============ */
@@ -1074,7 +1114,9 @@ async function finishSetup(){
   if(!name||username.length<3){err.textContent='Заполните имя и юзернейм (от 3 символов)';err.style.display='block';return}
   err.style.display='none';
   try{
-    const r=await api('/api/profile/setup',{name,username});
+    let ref='';try{ref=localStorage.getItem('newchat_ref')||''}catch(e){}
+    const r=await api('/api/profile/setup',{name,username,ref});
+    try{localStorage.removeItem('newchat_ref')}catch(e){}
     S=r.state;connectWS();go('s-chats');
   }catch(e){}
 }
@@ -1293,11 +1335,11 @@ function renderChats(){
     const last=c.msgs[c.msgs.length-1];
     const peer=c.peer||{name:'?',username:''};
     const check=peer.verified?'<span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
-    const color=c.service?'linear-gradient(135deg,#9788EA,#5B4BD4)':colorFor(peer.username||peer.name);
+    const kind=c.type==='channel'?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">канал</span>':(peer.bot?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">бот</span>':'');
+    const av=c.service?'<div class="ava" style="background:linear-gradient(135deg,#9788EA,#5B4BD4)">N</div>':avaHtml(peer);
     const prev=last?(last.deleted?'Сообщение удалено':esc(last.text).slice(0,60)):'';
-    return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+
-      '<div class="ava" style="background:'+color+'">'+esc((peer.name||'?')[0].toUpperCase())+'</div>'+
-      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+'</div>'+
+    return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+av+
+      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+kind+'</div>'+
       '<div class="prev">'+prev+'</div></div>'+
       '<div class="end"><span class="time">'+(last?fmtTime(last.time):'')+'</span></div></div>';
   }).join('');
@@ -1318,16 +1360,39 @@ function openChat(id){
   const c=S.chats.find(x=>x.id===id);
   if(!c)return;
   const peer=c.peer||{name:'?',username:''};
-  const color=c.service?'linear-gradient(135deg,#9788EA,#5B4BD4)':colorFor(peer.username||peer.name);
   show('s-chat');
   const av=document.getElementById('chat-ava');
-  av.style.background=color;av.textContent=(peer.name||'?')[0].toUpperCase();
+  if(peer.photo){av.style.background='url('+peer.photo+') center/cover';av.textContent='';}
+  else if(c.service){av.style.background='linear-gradient(135deg,#9788EA,#5B4BD4)';av.textContent='N';}
+  else{av.style.background=peer.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(peer.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(peer.username||peer.name));av.textContent=(peer.name||'?')[0].toUpperCase();}
   document.getElementById('chat-name').innerHTML=esc(peer.name)+
     (peer.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'');
-  document.getElementById('chat-sub').textContent=c.service?'официальный аккаунт':'@'+peer.username;
-  document.getElementById('chat-menu-btn').style.display=c.service?'none':'flex';
-  document.querySelector('#s-chat .composer').style.display=c.service?'none':'flex';
+  let sub=c.service?'официальный аккаунт':'@'+peer.username;
+  if(c.type==='channel')sub=(c.subs||1)+' подписчиков'+(c.mine?' · ваш канал':'');
+  if(peer.bot)sub='@'+peer.username+' · бот';
+  document.getElementById('chat-sub').textContent=sub;
+  document.getElementById('chat-menu-btn').style.display=(c.service||c.type==='channel')?'none':'flex';
+  const comp=document.querySelector('#s-chat .composer');
+  comp.style.display=(c.service||c.canWrite===false)?'none':'flex';
+  /* Подписчику канала показываем, почему нельзя писать, и даём отписаться */
+  let note=document.getElementById('channel-note');
+  if(note)note.remove();
+  if(c.type==='channel'&&!c.mine){
+    const n=document.createElement('div');
+    n.id='channel-note';
+    n.style.cssText='padding:10px 16px;text-align:center;font-size:.8rem;color:var(--ink-2)';
+    n.innerHTML='В канале пишет только владелец · <a href="#" onclick="leaveChannel(\''+c.id+'\');return false" style="color:var(--accent)">отписаться</a>';
+    comp.parentNode.insertBefore(n,comp);
+  }
   renderMsgs(c);
+}
+async function leaveChannel(id){
+  if(!confirm('Отписаться от канала?'))return;
+  try{
+    const r=await api('/api/channels/leave',{chatId:id});
+    S.chats=r.chats;go('s-chats');
+    toast('Вы отписались');
+  }catch(e){}
 }
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
@@ -1394,180 +1459,304 @@ async function submitReport(){
   }catch(e){setTimeout(closeSheets,1200)}
 }
 
-/* ============ КОШЕЛЁК ============ */
+/* ============ СДЕЛКИ И РЕКВИЗИТЫ ============ */
+const DEAL_STATUS={
+  pay:{t:'Ожидает перевода',c:'var(--gold)'},
+  paid:{t:'Перевод отмечен',c:'var(--accent)'},
+  done:{t:'Завершена',c:'var(--trust)'},
+  cancelled:{t:'Отменена',c:'var(--ink-2)'},
+  dispute:{t:'Спор — на проверке',c:'var(--danger)'}
+};
+
 function renderWallet(){
   if(!S)return;
-  document.getElementById('balance').textContent=fmtRub(S.user.balance);
-  document.getElementById('balance-conv').textContent=
-    '≈ '+(S.user.balance/RATES.usd).toFixed(1).replace('.',',')+' $ · '+
-    (S.user.balance/RATES.aed).toFixed(1).replace('.',',')+' AED';
-  const h=document.getElementById('w-history');
-  if(!S.history.length){
-    h.innerHTML='<div class="empty" style="padding:40px"><b>Операций пока нет</b><p>Пополните кошелёк — история появится здесь.</p></div>';
-    return;
-  }
-  h.innerHTML=S.history.map(op=>{
+  const rq=S.user.requisites;
+  document.getElementById('req-card').innerHTML=rq
+    ? '<div class="uname-card glass-card" onclick="openReq()" style="cursor:pointer"><div class="u">'+
+      '<div class="h">'+(rq.kind==='sbp'?'СБП · '+esc(rq.bank||''):'Карта')+'</div>'+
+      '<div class="p mono">'+esc(rq.kind==='sbp'?rq.value:('•• '+rq.value.slice(-4)))+' · покупатели переводят сюда</div></div>'+
+      '<span class="val" style="color:var(--accent)">изменить</span></div>'
+    : '<div class="uname-card glass-card" onclick="openReq()" style="cursor:pointer;border-style:dashed"><div class="u">'+
+      '<div class="h">Указать реквизиты</div>'+
+      '<div class="p">Нужны, чтобы продавать юзернеймы — покупатель переведёт напрямую вам</div></div>'+
+      '<span class="val" style="color:var(--accent)">добавить</span></div>';
+
+  const act=(S.deals||[]).filter(d=>d.status==='pay'||d.status==='paid'||d.status==='dispute');
+  document.getElementById('deals-active').innerHTML=act.length?act.map(dealCard).join('')
+    :'<div class="empty" style="padding:24px"><b>Активных сделок нет</b><p>Купите юзернейм на бирже или выставьте свой.</p></div>';
+
+  const done=(S.deals||[]).filter(d=>d.status==='done'||d.status==='cancelled');
+  const hist=done.map(dealCard).join('')+(S.history||[]).map(op=>{
     const plus=op.amt>0;
-    const ic=plus
-      ?'<div class="ic" style="background:var(--trust-soft);color:var(--trust)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>'
-      :'<div class="ic" style="background:var(--danger-soft);color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>';
-    return '<div class="w-item glass-card">'+ic+
-      '<div class="u"><div class="h">'+esc(op.title)+'</div><div class="p">'+esc(op.sub)+'</div></div>'+
+    return '<div class="w-item glass-card"><div class="u"><div class="h">'+esc(op.title)+'</div>'+
+      '<div class="p">'+esc(op.sub)+'</div></div>'+
       '<div class="amt mono'+(plus?' plus':'')+'">'+(plus?'+':'−')+Math.abs(op.amt).toLocaleString('ru')+' ₽</div></div>';
   }).join('');
+  document.getElementById('w-history').innerHTML=hist||'<div class="empty" style="padding:24px"><b>Пока пусто</b><p>Здесь появится история сделок.</p></div>';
 }
-/* ============ ПРЕМИУМ ============ */
+function dealCard(d){
+  const st=DEAL_STATUS[d.status]||{t:d.status,c:'var(--ink-2)'};
+  const who=d.role==='buyer'?('покупка у '+esc((d.seller||{}).name||'—')):('продажа для '+esc((d.buyer||{}).name||'—'));
+  return '<div class="uname-card glass-card" style="cursor:pointer;margin-top:10px" onclick="openDeal(\''+d.id+'\')"><div class="u">'+
+    '<div class="h mono">@'+esc(d.username)+'</div>'+
+    '<div class="p">'+who+' · <span style="color:'+st.c+'">'+st.t+'</span></div></div>'+
+    '<span class="price mono">'+d.price.toLocaleString('ru')+' ₽</span></div>';
+}
+function openDeal(id){
+  const d=(S.deals||[]).find(x=>x.id===id);
+  if(!d)return;
+  const b=document.getElementById('deal-body');
+  const rq=d.requisites||{};
+  const reqLine=rq.kind==='sbp'
+    ? 'СБП '+esc(rq.value)+(rq.bank?' ('+esc(rq.bank)+')':'')
+    : 'карта '+esc(rq.value||'');
+  let html='<h3>@'+esc(d.username)+' · '+d.price.toLocaleString('ru')+' ₽</h3>';
+  const st=DEAL_STATUS[d.status];
+  html+='<p class="desc">Статус: <b style="color:'+st.c+'">'+st.t+'</b></p>';
+
+  if(d.status==='pay'&&d.role==='buyer'){
+    html+='<div class="conv-preview" style="text-align:left">Переведите <b class="mono">'+d.price.toLocaleString('ru')+' ₽</b> продавцу '+esc((d.seller||{}).name||'')+':<br><b>'+reqLine+'</b><br><span style="font-size:.75rem">Перевод — из вашего банковского приложения, как обычному человеку.</span></div>';
+    html+='<p class="fee-note">Юзернейм заморожен за вами. На оплату: '+fmtLeft(d.payDeadline-Date.now())+'</p>';
+    html+='<button class="btn" onclick="dealAct(\''+d.id+'\',\'paid\')">Я перевёл деньги</button>';
+    html+='<button class="btn ghost" onclick="dealAct(\''+d.id+'\',\'cancel\')">Отменить сделку</button>';
+  }
+  if(d.status==='pay'&&d.role==='seller'){
+    html+='<p class="desc">Покупатель '+esc((d.buyer||{}).name||'')+' получил ваши реквизиты и должен перевести деньги. Юзернейм заморожен до конца сделки.</p>';
+    html+='<button class="btn ghost" onclick="dealAct(\''+d.id+'\',\'cancel\')">Отменить сделку</button>';
+  }
+  if(d.status==='paid'&&d.role==='seller'){
+    html+='<div class="conv-preview" style="text-align:left">Покупатель отметил перевод <b class="mono">'+d.price.toLocaleString('ru')+' ₽</b> на '+reqLine+'.<br>Проверьте поступление в банке.</div>';
+    html+='<p class="fee-note">Без вашего ответа юзернейм перейдёт покупателю автоматически через '+fmtLeft(d.autoAt-Date.now())+'</p>';
+    html+='<button class="btn" onclick="dealAct(\''+d.id+'\',\'confirm\')">Деньги пришли — передать юзернейм</button>';
+    html+='<button class="btn danger" onclick="dealAct(\''+d.id+'\',\'dispute\')">Денег нет — открыть спор</button>';
+  }
+  if(d.status==='paid'&&d.role==='buyer'){
+    html+='<p class="desc">Ждём подтверждения продавца. Если он не ответит, юзернейм перейдёт вам автоматически через '+fmtLeft(d.autoAt-Date.now())+'.</p>';
+  }
+  if(d.status==='dispute'){
+    html+='<p class="desc">Сделку проверяет модерация Newchat. Понадобится выписка о переводе.</p>';
+  }
+  if(d.status==='done'){
+    html+='<p class="desc">Сделка завершена '+new Date(d.paidAt||d.createdAt).toLocaleDateString('ru')+'.</p>';
+  }
+  html+='<button class="btn ghost" onclick="closeSheets()">Закрыть</button>';
+  b.innerHTML=html;
+  openSheet('sheet-deal');
+}
+async function dealAct(id,act){
+  const conf={
+    paid:'Отмечаем: вы перевели деньги продавцу. Ложная отметка ведёт к спору и минусу доверия.',
+    confirm:'Деньги пришли? Юзернейм сразу перейдёт покупателю.',
+    cancel:'Отменить сделку?',
+    dispute:'Открыть спор? Сделку проверит модерация.'
+  }[act];
+  if(conf&&!confirm(conf))return;
+  try{
+    const r=await api('/api/deals/'+act,{dealId:id});
+    if(r.state)S=r.state;
+    closeSheets();renderWallet();
+    toast({paid:'Продавец уведомлён',confirm:'Юзернейм передан покупателю',cancel:'Сделка отменена',dispute:'Спор открыт'}[act]);
+  }catch(e){}
+}
+
+/* ---- Реквизиты ---- */
+let reqKind='sbp';
+function setReqKind(k){
+  reqKind=k;
+  document.getElementById('rq-sbp').classList.toggle('on',k==='sbp');
+  document.getElementById('rq-card').classList.toggle('on',k==='card');
+  document.getElementById('req-value').placeholder=k==='sbp'?'+7 900 000-00-00':'Номер карты';
+  document.getElementById('req-bank-field').style.display=k==='sbp'?'flex':'none';
+}
+function openReq(){
+  const rq=S.user.requisites;
+  if(rq){
+    setReqKind(rq.kind);
+    document.getElementById('req-value').value=rq.value;
+    document.getElementById('req-bank').value=rq.bank||'';
+    document.getElementById('req-del-btn').style.display='block';
+  }else{
+    setReqKind('sbp');
+    document.getElementById('req-value').value='';
+    document.getElementById('req-bank').value='';
+    document.getElementById('req-del-btn').style.display='none';
+  }
+  openSheet('sheet-req');
+}
+async function saveReq(){
+  try{
+    const r=await api('/api/profile/requisites',{
+      kind:reqKind,
+      value:document.getElementById('req-value').value,
+      bank:document.getElementById('req-bank').value
+    });
+    S.user.requisites=r.requisites;
+    closeSheets();renderWallet();
+    toast('Реквизиты сохранены');
+  }catch(e){}
+}
+async function deleteReq(){
+  if(!confirm('Удалить реквизиты? Ваши лоты снимутся с продажи.'))return;
+  try{
+    await api('/api/profile/requisites/delete',{});
+    await refresh();closeSheets();
+    toast('Реквизиты удалены');
+  }catch(e){}
+}
+
+/* ============ ПОИСК ============ */
+let searchTimer=null;
+function openSearch(){
+  show('s-search');
+  const inp=document.getElementById('search-input');
+  inp.value='';inp.focus();
+}
+document.getElementById('search-input').addEventListener('input',()=>{
+  clearTimeout(searchTimer);
+  searchTimer=setTimeout(doSearch,300);
+});
+async function doSearch(){
+  const q=document.getElementById('search-input').value.trim();
+  const box=document.getElementById('search-results');
+  if(q.length<2)return;
+  try{
+    const r=await api('/api/search',{q});
+    if(!r.results.length){
+      box.innerHTML='<div class="empty"><b>Ничего не нашлось</b><p>Попробуйте другое имя или юзернейм.</p></div>';
+      return;
+    }
+    box.innerHTML=r.results.map(x=>{
+      const it=x.item;
+      if(x.kind==='channel'){
+        return '<div class="chat-item" onclick="joinChannel(\''+it.id+'\','+(it.member?1:0)+')">'+
+          avaHtml({name:it.name,channel:true})+
+          '<div class="mid"><div class="name">'+esc(it.name)+' <span class="val" style="font-size:.68rem;color:var(--ink-2)">канал</span></div>'+
+          '<div class="prev">'+it.subs+' подписчиков'+(it.username?' · @'+esc(it.username):'')+'</div></div>'+
+          '<div class="end"><span class="val" style="color:var(--accent)">'+(it.member?'открыть':'подписаться')+'</span></div></div>';
+      }
+      return '<div class="chat-item" onclick="chatWith(\''+it.id+'\')">'+avaHtml(it)+
+        '<div class="mid"><div class="name">'+esc(it.name)+(it.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'')+(x.kind==='bot'?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">бот</span>':'')+'</div>'+
+        '<div class="prev">@'+esc(it.username)+'</div></div></div>';
+    }).join('');
+  }catch(e){}
+}
+async function chatWith(userId){
+  try{
+    const r=await api('/api/chats/create',{userId});
+    await refresh();
+    openChat(r.chatId);
+  }catch(e){}
+}
+async function joinChannel(id,isMember){
+  try{
+    const r=await api('/api/channels/join',{chatId:id});
+    S.chats=r.chats;
+    openChat(id);
+    if(!isMember)toast('Вы подписались');
+  }catch(e){}
+}
+
+/* ============ КАНАЛЫ ============ */
+async function createChannel(){
+  const title=document.getElementById('ch-title').value.trim();
+  const uname=document.getElementById('ch-uname').value.trim();
+  if(!title){toast('Введите название');return}
+  try{
+    const r=await api('/api/channels/create',{title,username:uname});
+    document.getElementById('ch-title').value='';
+    document.getElementById('ch-uname').value='';
+    closeSheets();
+    await refresh();
+    openChat(r.chatId);
+    toast('Канал создан — напишите первый пост');
+  }catch(e){}
+}
+
+/* ============ БОТЫ ============ */
+function openBots(){
+  renderBots();
+  openSheet('sheet-bots');
+}
+function renderBots(){
+  const list=document.getElementById('bots-list');
+  const bots=S.bots||[];
+  document.getElementById('p-bots').textContent=bots.length+' из 3';
+  list.innerHTML=bots.length?bots.map(b=>
+    '<div class="uname-card glass-card" style="margin-top:8px"><div class="u">'+
+    '<div class="h">'+esc(b.name)+' <span class="mono" style="font-size:.75rem;color:var(--ink-2)">@'+esc(b.username)+'</span></div>'+
+    '<div class="p mono" style="word-break:break-all;font-size:.68rem" onclick="copyText(\''+b.token+'\')" title="Скопировать">'+esc(b.token)+'</div></div>'+
+    '<button class="pill-btn sell" onclick="deleteBot(\''+b.id+'\')">×</button></div>'
+  ).join(''):'';
+}
+async function createBot(){
+  const name=document.getElementById('bot-name').value.trim();
+  const uname=document.getElementById('bot-uname').value.trim();
+  try{
+    const r=await api('/api/bots/create',{name,username:uname});
+    S.bots=r.bots;
+    document.getElementById('bot-name').value='';
+    document.getElementById('bot-uname').value='';
+    renderBots();
+    copyText(r.bot.token);
+    toast('Бот создан, токен скопирован');
+  }catch(e){}
+}
+async function deleteBot(id){
+  if(!confirm('Удалить бота? Токен перестанет работать.'))return;
+  try{
+    const r=await api('/api/bots/delete',{botId:id});
+    S.bots=r.bots;renderBots();
+  }catch(e){}
+}
+function copyText(t){
+  try{navigator.clipboard.writeText(t)}catch(e){
+    const i=document.createElement('input');i.value=t;document.body.appendChild(i);i.select();document.execCommand('copy');i.remove();
+  }
+}
+
+/* ============ АВАТАР ============ */
+function uploadAvatar(input){
+  const f=input.files&&input.files[0];
+  if(!f)return;
+  const img=new Image();
+  img.onload=()=>{
+    /* Сжимаем до 256px, чтобы фото летало даже на медленном интернете */
+    const c=document.createElement('canvas');
+    const side=Math.min(img.width,img.height);
+    c.width=c.height=256;
+    c.getContext('2d').drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,256,256);
+    const data=c.toDataURL('image/jpeg',0.82);
+    api('/api/profile/update',{photo:data}).then(()=>{
+      S.user.photo=data;renderProfile();
+      toast('Аватар обновлён');
+    }).catch(()=>{});
+  };
+  img.src=URL.createObjectURL(f);
+  input.value='';
+}
+
+/* ============ ПРЕМИУМ ЗА ПРИГЛАШЕНИЯ ============ */
+function inviteLink(){
+  return location.origin+location.pathname+'?ref='+encodeURIComponent(S.user.username);
+}
 function openPremium(){
   const u=S.user;
   const box=document.getElementById('prem-body');
   let html='';
-
+  const left=u.invitesNeeded-((u.invites||0)%u.invitesNeeded);
   if(u.premium){
-    const until=new Date(u.premiumUntil).toLocaleDateString('ru');
     document.getElementById('prem-title').textContent='Премиум активен';
-    html='<p>Действует до <b>'+until+'</b>.<br>У вас '+u.slots+' слотов под юзернеймы.</p>'+
-      '<button class="btn" onclick="buyPremium()">Продлить за '+u.premiumPrice+' ₽</button>';
+    html='<p>Действует до <b>'+new Date(u.premiumUntil).toLocaleDateString('ru')+'</b>.<br>У вас '+u.slots+' слотов под юзернеймы.</p>';
   }else{
     document.getElementById('prem-title').textContent='Newchat Premium';
-    html='<p style="text-align:left">'+
-      '· <b>'+u.slots+' → 5 слотов</b> под юзернеймы<br>'+
-      '· Больше места на бирже<br>'+
-      '· Поддержка проекта</p>'+
-      '<div class="conv-preview"><b class="mono">'+u.premiumPrice+' ₽</b> за '+u.premiumDays+' дней</div>'+
-      '<div class="conv-preview" style="border-style:solid">На балансе: <b class="mono">'+fmtRub(u.balance)+'</b></div>';
-    html+= u.balance>=u.premiumPrice
-      ? '<button class="btn" onclick="buyPremium()">Купить премиум</button>'
-      : '<button class="btn" onclick="closeSheets();go(\'s-wallet\');openSheet(\'sheet-topup\')">Пополнить кошелёк</button>';
+    html='<p style="text-align:left">· <b>5 слотов</b> под юзернеймы вместо 3<br>· Метка премиума в профиле</p>';
   }
+  html+='<p style="text-align:left">Премиум выдаётся <b>бесплатно</b> — за друзей. Приглашено: <b>'+(u.invites||0)+'</b>. До '+(u.premium?'продления':'премиума')+' осталось: <b>'+left+'</b>.</p>';
+  html+='<div class="conv-preview mono" style="font-size:.7rem;word-break:break-all">'+esc(inviteLink())+'</div>';
+  html+='<button class="btn" onclick="copyText(inviteLink());toast(\'Ссылка скопирована\')">Скопировать ссылку</button>';
   html+='<button class="btn ghost" onclick="closeSheets()">Закрыть</button>';
   box.innerHTML=html;
   openSheet('sheet-premium');
-}
-async function buyPremium(){
-  try{
-    const r=await api('/api/premium/buy',{});
-    S=r.state;
-    closeSheets();renderProfile();
-    toast('Премиум активирован');
-  }catch(e){}
-}
-
-let payMethod='sbp';
-let pendingPayment=null;
-
-function setMethod(m){
-  payMethod=m;
-  document.getElementById('pm-sbp').classList.toggle('on',m==='sbp');
-  document.getElementById('pm-card').classList.toggle('on',m==='card');
-}
-async function doTopup(){
-  const v=parseFloat(document.getElementById('topup-amount').value)||0;
-  if(v<100){toast('Минимум 100 ₽');return}
-  try{
-    const r=await api('/api/wallet/payment/create',{
-      amount:v,method:payMethod,returnUrl:location.href.split('?')[0]
-    });
-    document.getElementById('topup-amount').value='';
-    closeSheets();
-    if(r.testMode){
-      await refresh();
-      toast('Тестовый режим: зачислено '+fmtRub(v));
-      return;
-    }
-    pendingPayment=r.paymentId;
-    try{localStorage.setItem('newchat_pay',r.paymentId)}catch(e){}
-    const w=window.open(r.url,'_blank');
-    if(!w)location.href=r.url;
-    startPayPoll();
-    toast('Откройте страницу оплаты');
-  }catch(e){}
-}
-/* Ждём подтверждения оплаты — приложение спрашивает сервер, а сервер банк */
-let payPoll=null;
-function startPayPoll(){
-  clearInterval(payPoll);
-  let tries=0;
-  payPoll=setInterval(async()=>{
-    if(!pendingPayment||++tries>150){clearInterval(payPoll);return}
-    try{
-      const r=await api('/api/wallet/payment/check',{paymentId:pendingPayment});
-      if(r.status==='ok'){
-        clearInterval(payPoll);
-        pendingPayment=null;
-        try{localStorage.removeItem('newchat_pay')}catch(e){}
-        await refresh();
-        toast('Кошелёк пополнен');
-      }
-      if(r.status==='canceled'){
-        clearInterval(payPoll);pendingPayment=null;
-        try{localStorage.removeItem('newchat_pay')}catch(e){}
-        toast('Платёж отменён');
-      }
-    }catch(e){clearInterval(payPoll)}
-  },3000);
-}
-
-/* ---- Вывод ---- */
-let wdInfo=null;
-let wdCard='';
-
-async function openWithdraw(){
-  openSheet('sheet-withdraw');
-  document.getElementById('wd-body').innerHTML='<p class="desc">Загрузка…</p>';
-  try{
-    wdInfo=await api('/api/wallet/withdraw/info');
-    renderWithdraw();
-  }catch(e){
-    document.getElementById('wd-body').innerHTML='<p class="desc">Не удалось загрузить</p>';
-  }
-}
-function renderWithdraw(){
-  const i=wdInfo;
-  let html='';
-
-  if(i.blocks.length){
-    html+='<div class="law-note" style="background:var(--danger-soft);border-color:rgba(232,69,60,.3);color:var(--danger);margin-bottom:14px">'+
-      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l10 18H2L12 3z"/></svg>'+esc(i.blocks[0])+'</div>';
-  }
-
-  html+='<p class="desc">Вывести можно только на счёт, с которого пополняли. '+
-    'После пополнения деньги «остывают» '+i.holdDays+' дней — так работает защита от мошенников.</p>';
-
-  html+='<div class="conv-preview" style="text-align:left">'+
-    'Готово к выводу: <b class="mono">'+i.ripe.toLocaleString('ru')+' ₽</b>';
-  if(i.waiting>0)html+='<br><span style="font-size:.75rem">Ещё остывает: '+i.waiting.toLocaleString('ru')+' ₽</span>';
-  if(i.earned>0)html+='<br><span style="font-size:.75rem">Заработано внутри: '+i.earned.toLocaleString('ru')+' ₽ · выводится после проверки</span>';
-  html+='</div>';
-
-  if(i.cards.length&&!i.blocks.length){
-    html+='<div class="deco-label">Куда вывести</div>';
-    html+=i.cards.map((c,n)=>
-      '<div class="uname-card glass-card" style="margin:8px 0 0;cursor:pointer" onclick="pickCard(\''+c.key+'\')" id="wdc-'+n+'">'+
-      '<div class="u"><div class="h" style="font-size:.92rem">'+esc(c.title)+'</div>'+
-      '<div class="p">доступно '+c.available.toLocaleString('ru')+' ₽</div></div>'+
-      (wdCard===c.key?'<span class="tag-sale">ВЫБРАНО</span>':'')+'</div>'
-    ).join('');
-
-    html+='<div class="field" style="margin:14px 0 12px">'+
-      '<input type="number" placeholder="Сумма от '+i.minWithdraw+' ₽" id="wd-amount" inputmode="decimal">'+
-      '<span class="mono" style="color:var(--ink-2)">₽</span></div>';
-    html+='<p class="fee-note">Дневной лимит '+i.dayLimit.toLocaleString('ru')+' ₽ · сегодня выведено '+i.usedToday.toLocaleString('ru')+' ₽</p>';
-    html+='<button class="btn" onclick="doWithdraw()">Отправить заявку</button>';
-  }
-
-  document.getElementById('wd-body').innerHTML=html;
-}
-function pickCard(k){wdCard=k;renderWithdraw()}
-async function doWithdraw(){
-  const v=parseFloat(document.getElementById('wd-amount').value)||0;
-  if(!wdCard){toast('Выберите, куда вывести');return}
-  if(v<wdInfo.minWithdraw){toast('Минимум '+wdInfo.minWithdraw+' ₽');return}
-  try{
-    const r=await api('/api/wallet/withdraw',{amount:v,card:wdCard});
-    closeSheets();
-    await refresh();
-    toast(r.status==='pending'?'Заявка принята, идёт проверка':'Вывод отправлен');
-  }catch(e){}
 }
 
 /* ============ БИРЖА ============ */
@@ -1582,16 +1771,17 @@ function renderMarket(){
     '<div class="slots-dots">'+dots+'</div>'+
     '<div class="hint">'+(S.user.premium
       ? 'Премиум активен <span class="prem-chip">'+max+' СЛОТОВ</span>'
-      : 'С премиумом — до 5 слотов <span class="prem-chip">'+(S.user.premiumPrice||500)+' ₽</span>')+
+      : 'До 5 слотов — за приглашения <span class="prem-chip" onclick="openPremium()" style="cursor:pointer">БЕСПЛАТНО</span>')+
     '</div></div>';
   html+=S.usernames.map(u=>{
     const right=u.forSale
       ?'<span class="tag-sale">В ПРОДАЖЕ</span><span class="price mono">'+u.price.toLocaleString('ru')+' ₽</span>'
       :(u.main?'<span class="val" style="font-size:.74rem;color:var(--ink-2)">основной</span>'
              :'<button class="pill-btn sell" onclick="openSell(\''+u.u+'\')">Продать</button>');
+    const off=u.forSale?'<button class="pill-btn sell" onclick="unsell(\''+u.u+'\')" style="margin-left:6px">Снять</button>':'';
     return '<div class="uname-card glass-card"><div class="u">'+
       '<div class="h mono">@'+esc(u.u)+'</div>'+
-      '<div class="p">'+(u.main?'Основной юзернейм':'Дополнительный')+'</div></div>'+right+'</div>';
+      '<div class="p">'+(u.main?'Основной юзернейм':'Дополнительный')+'</div></div>'+right+off+'</div>';
   }).join('');
   if(used<max){
     html+='<div class="uname-card glass-card" style="justify-content:center;color:var(--ink-2);cursor:pointer;border-style:dashed" onclick="openSheet(\'sheet-claim\')">+ Занять юзернейм ('+(max-used)+' своб.)</div>';
@@ -1602,19 +1792,28 @@ function renderMarket(){
   if(!S.market.length){
     all.innerHTML='<div class="empty"><div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg></div><b>Лотов пока нет</b><p>Когда пользователи выставят юзернеймы на продажу, они появятся здесь.</p></div>';
   }else{
-    all.innerHTML=S.market.map(l=>
-      '<div class="uname-card glass-card" style="margin-top:12px"><div class="u">'+
+    all.innerHTML=S.market.map(l=>{
+      const sl=l.seller||{};
+      const st=sl.stats||{deals:0};
+      return '<div class="uname-card glass-card" style="margin-top:12px"><div class="u">'+
       '<div class="h mono">@'+esc(l.u)+'</div>'+
-      '<div class="p">Продавец: '+esc(l.seller?l.seller.name:'—')+'</div></div>'+
+      '<div class="p">'+esc(sl.name||'—')+' · доверие '+(sl.trust||0)+'% · сделок: '+st.deals+'</div></div>'+
       '<span class="price mono">'+l.price.toLocaleString('ru')+' ₽</span>'+
-      '<button class="pill-btn buy" onclick="buyUname(\''+l.u+'\')">Купить</button></div>'
-    ).join('');
+      '<button class="pill-btn buy" onclick="openBuy(\''+l.u+'\')">Купить</button></div>';
+    }).join('');
   }
 }
 function openSell(u){
   sellUname=u;
   document.getElementById('sell-uname').textContent='@'+u;
   openSheet('sheet-sell');
+}
+async function unsell(u){
+  try{
+    const r=await api('/api/usernames/unsell',{username:u});
+    S.usernames=r.usernames;renderMarket();
+    toast('@'+u+' снят с продажи');
+  }catch(e){}
 }
 async function doSell(){
   const p=parseFloat(document.getElementById('sell-price').value)||0;
@@ -1636,12 +1835,26 @@ async function doClaim(){
     toast('@'+u+' занят');
   }catch(e){}
 }
-async function buyUname(u){
-  if(!confirm('Купить @'+u+'?'))return;
+function openBuy(u){
+  const l=S.market.find(x=>x.u===u);
+  if(!l)return;
+  const sl=l.seller||{};
+  document.getElementById('buy-body').innerHTML=
+    '<h3>Купить @'+esc(u)+'</h3>'+
+    '<p class="desc">Продавец: '+esc(sl.name||'')+' · доверие '+(sl.trust||0)+'% · сделок: '+((sl.stats||{}).deals||0)+'</p>'+
+    '<div class="conv-preview" style="text-align:left"><b class="mono">'+l.price.toLocaleString('ru')+' ₽</b> — вы переведёте их продавцу напрямую, банк в банк.<br>'+
+    '<span style="font-size:.75rem">Юзернейм сразу заморозится за вами. Продавец подтвердит перевод — и он ваш. Если продавец молчит 7 дней после перевода, юзернейм перейдёт вам автоматически.</span></div>'+
+    '<button class="btn" onclick="startDeal(\''+u+'\')">Начать сделку</button>'+
+    '<button class="btn ghost" onclick="closeSheets()">Отмена</button>';
+  openSheet('sheet-buy');
+}
+async function startDeal(u){
   try{
-    const r=await api('/api/usernames/buy',{username:u});
-    S=r.state;renderMarket();
-    toast('@'+u+' теперь ваш');
+    const r=await api('/api/deals/start',{username:u});
+    S=r.state;
+    closeSheets();
+    go('s-wallet');
+    openDeal(r.deal.id);
   }catch(e){}
 }
 function marketTab(which){
@@ -1656,8 +1869,9 @@ function renderProfile(){
   if(!S)return;
   const u=S.user;
   document.getElementById('p-cover').style.background=COVERS[u.cover||0];
-  document.getElementById('p-ava').style.background=AVAS[u.ava||0];
-  document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();
+  const pa=document.getElementById('p-ava');
+  if(u.photo){pa.style.background='url('+u.photo+') center/cover';document.getElementById('p-initial').textContent='';}
+  else{pa.style.background=AVAS[u.ava||0];document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();}
   document.getElementById('p-status').textContent=u.status||'';
   document.getElementById('p-name').textContent=u.name;
   const ph=u.phone?('+7 '+u.phone.slice(0,3)+' •••-••-'+u.phone.slice(-2)):'';
@@ -1665,13 +1879,15 @@ function renderProfile(){
   document.getElementById('p-vcheck').style.display=u.verified?'inline-flex':'none';
   document.getElementById('p-devtag').style.display=u.dev?'block':'none';
   document.getElementById('verify-cta').style.display=u.verified?'none':'flex';
-  document.getElementById('p-balance').textContent=fmtRub(u.balance);
+  const actd=(S.deals||[]).filter(d=>d.status==='pay'||d.status==='paid'||d.status==='dispute').length;
+  document.getElementById('p-deals').textContent=actd?actd+' актив.':((S.deals||[]).length||'—');
+  document.getElementById('p-bots').textContent=(S.bots||[]).length+' из 3';
   document.getElementById('p-unames').textContent=S.usernames.length+' из '+(u.slots||3);
   const pc=document.getElementById('p-premium');
   if(u.premium){
     pc.textContent='ДО '+new Date(u.premiumUntil).toLocaleDateString('ru');
   }else{
-    pc.textContent=(u.premiumPrice||500)+' ₽ / МЕС';
+    pc.textContent='ЗА '+(u.invitesNeeded||3)+' ДРУЗЕЙ';
   }
   document.getElementById('p-reports').textContent=S.reports;
   document.getElementById('trust-fill').style.width=(u.trust||0)+'%';
@@ -1702,18 +1918,6 @@ async function submitVerify(){
     toast('Заявка на верификацию отправлена');
   }catch(e){}
 }
-
-/* ============ QR ============ */
-(function(){
-  const qr=document.getElementById('qr');
-  let seed=Date.now()%99991;
-  const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280};
-  for(let i=0;i<49;i++){
-    const cell=document.createElement('i');
-    if(rnd()<0.42)cell.classList.add('o');
-    qr.appendChild(cell);
-  }
-})();
 
 /* ============ PWA ============ */
 if('serviceWorker' in navigator){
@@ -1769,10 +1973,6 @@ async function boot(){
       const r=await res.json().catch(()=>null);
       if(r&&r.state){
         S=r.state;connectWS();go('s-chats');
-        try{
-          const p=localStorage.getItem('newchat_pay');
-          if(p){pendingPayment=p;startPayPoll()}
-        }catch(e){}
         return;
       }
     }

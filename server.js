@@ -29,45 +29,37 @@ const TG_ENABLED = !!(TG_TOKEN && TG_BOT_NAME);
 const TG_SECRET = crypto.randomBytes(16).toString('hex');
 const PUBLIC_URL = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
 
-/* ================= ПЛАТЕЖИ ================= */
-/* Ключи ЮKassa. Без них кошелёк работает в тестовом режиме без реальных денег. */
-const YK_SHOP_ID = process.env.YOOKASSA_SHOP_ID || '';
-const YK_SECRET = process.env.YOOKASSA_SECRET_KEY || '';
-const YK_ENABLED = !!(YK_SHOP_ID && YK_SECRET);
+/* ================= ПРАВИЛА ================= */
+/* Денег у площадки нет: покупатель платит продавцу напрямую, банк в банк.
+   Сервер лишь замораживает юзернейм на время сделки и передаёт его. */
 
-/* Выплаты включаются отдельно и только после договора с провайдером.
-   Пока выключено — заявки копятся и ждут ручного подтверждения. */
-const PAYOUTS_AUTO = process.env.PAYOUTS_AUTO === 'yes';
-
-/* Пароль для страницы модерации выплат */
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
-/* Комиссия площадки с продажи юзернейма, в процентах */
-const FEE_PERCENT = Number(process.env.FEE_PERCENT || 5);
-
-/* Премиум: цена и что даёт */
+/* Премиум теперь не за деньги, а за приглашённых друзей */
 const PREMIUM = {
-  price: Number(process.env.PREMIUM_PRICE || 500),
   days: Number(process.env.PREMIUM_DAYS || 30),
   slots: 5,
-  freeSlots: 3
+  freeSlots: 3,
+  invites: Number(process.env.PREMIUM_INVITES || 3)
 };
 
-/* Правила вывода. Меняются переменными окружения, если понадобится. */
-const RULES = {
-  holdDays: Number(process.env.HOLD_DAYS || 7),          // сколько дней деньги «остывают» после пополнения
-  earnedHoldDays: Number(process.env.EARNED_HOLD_DAYS || 14), // выручка с продаж ждёт дольше
-  minWithdraw: Number(process.env.MIN_WITHDRAW || 500),
-  maxPerDay: Number(process.env.MAX_PER_DAY || 50000),
-  maxPerRequest: Number(process.env.MAX_PER_REQUEST || 30000),
-  minTrust: Number(process.env.MIN_TRUST || 70),         // с низким доверием вывод закрыт
-  manualAbove: Number(process.env.MANUAL_ABOVE || 5000)  // выше этой суммы — только ручное подтверждение
+/* Сделка на бирже: сколько часов ждём оплату и через сколько дней
+   после «Я перевёл» юзернейм переходит покупателю автоматически */
+const DEAL = {
+  payHours: Number(process.env.DEAL_PAY_HOURS || 24),
+  confirmDays: Number(process.env.DEAL_CONFIRM_DAYS || 7)
 };
+
+/* Продавать юзернеймы можно только с доверием не ниже порога */
+const SELL_MIN_TRUST = Number(process.env.SELL_MIN_TRUST || 60);
+
+/* Лимит ботов на человека */
+const BOTS_PER_USER = Number(process.env.BOTS_PER_USER || 3);
 
 /* ================= ХРАНИЛИЩЕ ================= */
 
 let db = {
-  users: {},      // userId -> { id, phone, name, username, cover, ava, status, verified, dev, balance, trust, createdAt }
+  users: {},      // userId -> { id, phone, name, username, photo, banner, status, verified, dev, trust, requisites, createdAt }
   usernames: {},  // username -> { owner, main, forSale, price }
   chats: {},      // chatId -> { id, members:[a,b], service, msgs:[] }
   history: {},    // userId -> [операции кошелька]
@@ -76,10 +68,9 @@ let db = {
   tokens: {},     // token -> userId
   codes: {},      // phone -> { code, expires }
   tgSessions: {}, // session -> { created, chatId, status, token, needsSetup }
-  payments: {},   // paymentId -> платёж от провайдера
-  deposits: {},   // userId -> [пополнения с данными карты]
-  payouts: [],    // заявки на вывод
-  cards: {}       // userId -> [карты, подтверждённые пополнением]
+  deals: {},      // dealId -> сделка на бирже
+  botTokens: {},  // token -> botId
+  botUpdates: {}  // botId -> [входящие сообщения для бота]
 };
 
 /* Постоянное хранилище.
@@ -218,6 +209,8 @@ function publicUser(u) {
   return {
     id: u.id, name: u.name, username: u.username,
     cover: u.cover, ava: u.ava, status: u.status,
+    photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
+    bot: !!u.isBot,
     verified: !!u.verified, dev: !!u.dev
   };
 }
@@ -234,24 +227,41 @@ function slotLimit(user) {
 function chatIdFor(a, b) {
   return [a, b].sort().join(':');
 }
+function chatView(c, userId) {
+  let peer, type = 'dm';
+  if (c.service) {
+    type = 'service';
+    peer = { id: 'service', name: 'Newchat', username: 'newchat', verified: true };
+  } else if (c.type === 'channel') {
+    type = 'channel';
+    peer = {
+      id: c.id, name: c.title, username: c.uname || '',
+      photo: c.photo || null, channel: true
+    };
+  } else {
+    const otherId = c.members.find(m => m !== userId) || c.members[0];
+    peer = publicUser(db.users[otherId]);
+  }
+  return {
+    id: c.id,
+    type,
+    service: !!c.service,
+    owner: c.owner || null,
+    mine: c.owner === userId,
+    subs: c.type === 'channel' ? c.members.length : undefined,
+    canWrite: type === 'dm' || (type === 'channel' && c.owner === userId),
+    peer,
+    msgs: c.msgs.slice(-200).map(m => ({
+      id: m.id, text: m.text, time: m.time,
+      out: m.from === userId, deleted: !!m.deleted,
+      from: c.type === 'channel' ? undefined : m.from
+    }))
+  };
+}
 function userChats(userId) {
   return Object.values(db.chats)
     .filter(c => c.members.includes(userId))
-    .map(c => {
-      const otherId = c.members.find(m => m !== userId) || c.members[0];
-      const other = db.users[otherId];
-      return {
-        id: c.id,
-        service: !!c.service,
-        peer: c.service
-          ? { id: 'service', name: 'Newchat', username: 'newchat', verified: true }
-          : publicUser(other),
-        msgs: c.msgs.slice(-200).map(m => ({
-          id: m.id, text: m.text, time: m.time,
-          out: m.from === userId, deleted: !!m.deleted
-        }))
-      };
-    })
+    .map(c => chatView(c, userId))
     .sort((a, b) => {
       const la = a.msgs[a.msgs.length - 1], lb = b.msgs[b.msgs.length - 1];
       return (lb ? lb.time : 0) - (la ? la.time : 0);
@@ -262,28 +272,65 @@ function myUsernames(userId) {
     .filter(([, v]) => v.owner === userId)
     .map(([u, v]) => ({ u, main: !!v.main, forSale: !!v.forSale, price: v.price || 0 }));
 }
+function sellerStats(userId) {
+  const deals = Object.values(db.deals).filter(d => d.seller === userId && d.status === 'done');
+  return { deals: deals.length };
+}
 function marketList(exceptUser) {
   return Object.entries(db.usernames)
-    .filter(([, v]) => v.forSale && v.owner !== exceptUser)
+    .filter(([, v]) => v.forSale && !v.frozen && v.owner !== exceptUser)
     .map(([u, v]) => ({
       u, price: v.price || 0,
-      seller: publicUser(db.users[v.owner])
+      seller: Object.assign(publicUser(db.users[v.owner]) || {}, {
+        trust: (db.users[v.owner] || {}).trust || 0,
+        stats: sellerStats(v.owner)
+      })
+    }));
+}
+function dealView(d, userId) {
+  const seller = db.users[d.seller], buyer = db.users[d.buyer];
+  return {
+    id: d.id, username: d.username, price: d.price, status: d.status,
+    role: d.seller === userId ? 'seller' : 'buyer',
+    seller: publicUser(seller), buyer: publicUser(buyer),
+    requisites: d.requisites,
+    createdAt: d.createdAt, paidAt: d.paidAt || 0,
+    payDeadline: d.createdAt + DEAL.payHours * 3600e3,
+    autoAt: d.paidAt ? d.paidAt + DEAL.confirmDays * 86400e3 : 0
+  };
+}
+function myDeals(userId) {
+  return Object.values(db.deals)
+    .filter(d => d.seller === userId || d.buyer === userId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 50)
+    .map(d => dealView(d, userId));
+}
+function myBots(userId) {
+  return Object.values(db.users)
+    .filter(u => u.isBot && u.owner === userId)
+    .map(b => ({
+      id: b.id, name: b.name, username: b.username,
+      token: Object.keys(db.botTokens).find(t => db.botTokens[t] === b.id)
     }));
 }
 function fullState(user) {
   return {
     user: Object.assign(publicUser(user), {
-      phone: user.phone, balance: user.balance, trust: user.trust,
-      frozen: !!user.frozen,
+      phone: user.phone, trust: user.trust,
       premium: isPremium(user),
       premiumUntil: user.premiumUntil || 0,
       slots: slotLimit(user),
-      premiumPrice: PREMIUM.price,
-      premiumDays: PREMIUM.days
+      premiumDays: PREMIUM.days,
+      invites: user.inviteCount || 0,
+      invitesNeeded: PREMIUM.invites,
+      requisites: user.requisites || null
     }),
     chats: userChats(user.id),
     usernames: myUsernames(user.id),
     market: marketList(user.id),
+    deals: myDeals(user.id),
+    bots: myBots(user.id),
     history: db.history[user.id] || [],
     reports: db.reports.filter(r => r.from === user.id).length
   };
@@ -330,7 +377,7 @@ function loginByPhone(phone10, tgId) {
       id, phone: phone10, name: '', username: '',
       cover: 0, ava: 0, status: '',
       verified: false, dev: false,
-      balance: 0, trust: 100, createdAt: now(),
+      trust: 100, createdAt: now(),
       telegramId: tgId || null
     };
     db.users[id] = user;
@@ -458,181 +505,62 @@ async function startTelegram() {
   }
 }
 
-/* ================= ПЛАТЁЖНАЯ СИСТЕМА ================= */
+/* ================= СДЕЛКИ НА БИРЖЕ ================= */
+/* Как на Авито, только в залоге лежит не деньги, а сам юзернейм:
+   1. Покупатель жмёт «Купить» — юзернейм замораживается, видны реквизиты продавца.
+   2. Покупатель переводит деньги напрямую (банк в банк) и жмёт «Я перевёл».
+   3. Продавец жмёт «Деньги пришли» — юзернейм переходит покупателю.
+   4. Продавец молчит 7 дней — юзернейм переходит автоматически.
+   5. Продавец жмёт «Денег нет» — спор, разбирает модерация. */
 
-async function yk(method, path, body, idempotenceKey) {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': 'Basic ' + Buffer.from(YK_SHOP_ID + ':' + YK_SECRET).toString('base64')
-  };
-  if (idempotenceKey) headers['Idempotence-Key'] = idempotenceKey;
+function finishDeal(deal, how) {
+  const rec = db.usernames[deal.username];
+  const seller = db.users[deal.seller];
+  const buyer = db.users[deal.buyer];
 
-  try {
-    const res = await fetch('https://api.yookassa.ru/v3' + path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(20000)
-    });
-    return await res.json();
-  } catch (e) {
-    console.error('ЮKassa ' + path + ':', e.message);
-    return null;
-  }
-}
-
-/* Отпечаток карты: по нему понимаем, что это та же самая карта */
-function cardKey(details) {
-  if (!details) return null;
-  if (details.type === 'sbp') {
-    /* СБП — платёж по номеру телефона через банк */
-    return 'sbp:' + (details.payer_bank_details && details.payer_bank_details.bank_id || 'unknown');
-  }
-  if (details.card) {
-    const c = details.card;
-    return 'card:' + (c.first6 || '') + ':' + (c.last4 || '');
-  }
-  return null;
-}
-
-function cardTitle(details) {
-  if (!details) return 'Неизвестно';
-  if (details.type === 'sbp') {
-    const b = details.payer_bank_details;
-    return 'СБП · ' + ((b && b.bank_name) || 'банк');
-  }
-  if (details.card) return 'Карта •• ' + (details.card.last4 || '????');
-  return 'Платёж';
-}
-
-/* Зачисление денег — только по подтверждению от провайдера, никогда по слову клиента */
-function creditPayment(payment) {
-  if (db.payments[payment.id] && db.payments[payment.id].credited) return false;
-
-  const meta = payment.metadata || {};
-  const user = db.users[meta.userId];
-  if (!user) return false;
-
-  const amount = Math.round(parseFloat(payment.amount.value));
-  const details = payment.payment_method || {};
-  const key = cardKey(details);
-  const title = cardTitle(details);
-
-  user.balance += amount;
-
-  db.deposits[user.id] = db.deposits[user.id] || [];
-  db.deposits[user.id].push({
-    id: payment.id,
-    amount,
-    left: amount,          // сколько из этого пополнения ещё можно вывести
-    cardKey: key,
-    cardTitle: title,
-    time: now(),
-    refunded: 0
-  });
-
-  /* Карта попадает в список выплат только потому, что с неё пришли деньги */
-  if (key) {
-    db.cards[user.id] = db.cards[user.id] || [];
-    if (!db.cards[user.id].some(c => c.key === key)) {
-      db.cards[user.id].push({ key, title, addedAt: now(), paymentId: payment.id });
+  if (how === 'done') {
+    if (rec) {
+      rec.owner = deal.buyer;
+      rec.forSale = false;
+      rec.frozen = null;
+      rec.price = 0;
+      rec.main = false;
     }
-  }
-
-  db.payments[payment.id] = { userId: user.id, amount, credited: true, time: now() };
-  db.history[user.id] = db.history[user.id] || [];
-  db.history[user.id].unshift({
-    amt: amount,
-    title: 'Пополнение',
-    sub: title,
-    time: now()
-  });
-  save();
-
-  serviceMessage(user.id, `Кошелёк пополнен на ${amount.toLocaleString('ru')} ₽ (${title}).`);
-  push(user.id, { type: 'state' });
-  return true;
-}
-
-/* Возврат или спорная операция — забираем деньги обратно */
-function handleRefund(payment) {
-  const rec = db.payments[payment.id];
-  if (!rec) return;
-  const user = db.users[rec.userId];
-  if (!user) return;
-
-  const refunded = Math.round(parseFloat(payment.refunded_amount ? payment.refunded_amount.value : payment.amount.value));
-  const dep = (db.deposits[user.id] || []).find(d => d.id === payment.id);
-  if (dep) {
-    dep.refunded = refunded;
-    dep.left = Math.max(0, dep.amount - refunded);
-  }
-
-  user.balance -= refunded;
-  /* Ушли в минус — значит вывели то, что вернули по спору. Замораживаем. */
-  if (user.balance < 0) {
-    user.frozen = true;
-    user.trust = Math.max(0, user.trust - 30);
-    serviceMessage(user.id, 'По одному из пополнений прошёл возврат. Кошелёк заморожен, свяжитесь с поддержкой.');
+    deal.status = 'done';
+    deal.doneAt = now();
+    db.history[deal.buyer] = db.history[deal.buyer] || [];
+    db.history[deal.buyer].unshift({ amt: -deal.price, title: 'Покупка @' + deal.username, sub: 'оплата напрямую продавцу', time: now() });
+    db.history[deal.seller] = db.history[deal.seller] || [];
+    db.history[deal.seller].unshift({ amt: deal.price, title: 'Продажа @' + deal.username, sub: 'деньги пришли вам напрямую', time: now() });
+    if (buyer) serviceMessage(buyer.id, `Сделка завершена: @${deal.username} теперь ваш.`);
+    if (seller) serviceMessage(seller.id, `Сделка завершена: @${deal.username} передан покупателю.`);
   } else {
-    serviceMessage(user.id, `Возврат по пополнению: ${refunded.toLocaleString('ru')} ₽ списано с баланса.`);
+    if (rec && rec.frozen === deal.id) {
+      rec.frozen = null;
+      rec.forSale = true; /* лот возвращается на биржу */
+    }
+    deal.status = 'cancelled';
+    deal.doneAt = now();
+    if (buyer) serviceMessage(buyer.id, `Сделка по @${deal.username} отменена.`);
+    if (seller) serviceMessage(seller.id, `Сделка по @${deal.username} отменена, лот снова на бирже.`);
   }
-
-  db.history[user.id] = db.history[user.id] || [];
-  db.history[user.id].unshift({ amt: -refunded, title: 'Возврат пополнения', sub: 'спор по платежу', time: now() });
   save();
-  push(user.id, { type: 'state' });
+  push(deal.buyer, { type: 'state' });
+  push(deal.seller, { type: 'state' });
 }
 
-/* ================= ЧТО МОЖНО ВЫВЕСТИ ================= */
-
-function withdrawInfo(user) {
-  const deposits = db.deposits[user.id] || [];
-  const holdMs = RULES.holdDays * 86400e3;
-
-  /* Готовы к выводу только «остывшие» пополнения */
-  const perCard = {};
-  let ripe = 0, waiting = 0;
-
-  for (const d of deposits) {
-    if (d.left <= 0) continue;
-    if (now() - d.time >= holdMs) {
-      ripe += d.left;
-      if (d.cardKey) perCard[d.cardKey] = (perCard[d.cardKey] || 0) + d.left;
-    } else {
-      waiting += d.left;
+/* Часовой сделок: отменяет неоплаченные и завершает подтверждённые времени */
+setInterval(() => {
+  for (const d of Object.values(db.deals)) {
+    if (d.status === 'pay' && now() - d.createdAt > DEAL.payHours * 3600e3) {
+      finishDeal(d, 'cancelled');
+    }
+    if (d.status === 'paid' && now() - d.paidAt > DEAL.confirmDays * 86400e3) {
+      /* Продавец не вышел на связь — защищаем покупателя, который оплатил */
+      finishDeal(d, 'done');
     }
   }
-
-  /* Заработанное внутри (продажи) — отдельный счёт с длинной выдержкой */
-  const earned = Math.max(0, user.balance - deposits.reduce((s, d) => s + d.left, 0));
-
-  const dayAgo = now() - 86400e3;
-  const usedToday = db.payouts
-    .filter(p => p.userId === user.id && p.time > dayAgo && p.status !== 'rejected')
-    .reduce((s, p) => s + p.amount, 0);
-
-  const cards = (db.cards[user.id] || []).map(c => ({
-    key: c.key,
-    title: c.title,
-    available: perCard[c.key] || 0
-  }));
-
-  const blocks = [];
-  if (user.frozen) blocks.push('Кошелёк заморожен');
-  if ((user.trust || 0) < RULES.minTrust) blocks.push('Низкая батарейка доверия');
-  if (!cards.length) blocks.push('Сначала пополните кошелёк — вывод возможен только на свою карту');
-
-  return {
-    ripe, waiting, earned, cards,
-    usedToday,
-    dayLimit: RULES.maxPerDay,
-    minWithdraw: RULES.minWithdraw,
-    holdDays: RULES.holdDays,
-    earnedHoldDays: RULES.earnedHoldDays,
-    blocks
-  };
-}
+}, Number(process.env.DEAL_TICK_MS || 5 * 60e3));
 
 /* ================= WEBSOCKET ================= */
 
@@ -755,7 +683,7 @@ route('POST', '/api/auth/verify', async (req, res, body) => {
       id, phone, name: '', username: '',
       cover: 0, ava: 0, status: '',
       verified: false, dev: false,
-      balance: 0, trust: 100, createdAt: now()
+      trust: 100, createdAt: now()
     };
     db.users[id] = user;
   }
@@ -784,6 +712,16 @@ route('POST', '/api/profile/setup', async (req, res, body, user) => {
   if (user.dev) user.verified = true;
 
   db.usernames[username] = { owner: user.id, main: true, forSale: false, price: 0 };
+
+  /* Пришёл по ссылке друга — засчитываем приглашение (один раз) */
+  const ref = normUsername(body.ref);
+  if (ref && !user.invitedBy && ref !== username && db.usernames[ref]) {
+    const inviter = db.users[db.usernames[ref].owner];
+    if (inviter && !inviter.isBot) {
+      user.invitedBy = inviter.id;
+      awardInvite(inviter);
+    }
+  }
   save();
 
   serviceMessage(user.id, `Добро пожаловать в Newchat, ${name}! Здесь будут уведомления о жалобах, покупках и безопасности аккаунта.`);
@@ -800,22 +738,36 @@ route('GET', '/api/state', async (req, res, body, user) => {
 route('POST', '/api/profile/update', async (req, res, body, user) => {
   if (typeof body.cover === 'number') user.cover = body.cover;
   if (typeof body.ava === 'number') user.ava = body.ava;
-  if (typeof body.status === 'string') user.status = body.status.slice(0, 4);
+  if (typeof body.banner === 'number') user.banner = Math.max(0, Math.min(7, body.banner));
+  if (typeof body.status === 'string') user.status = body.status.slice(0, 40);
+  if (typeof body.name === 'string' && body.name.trim()) user.name = body.name.trim().slice(0, 30);
+  if (typeof body.photo === 'string') {
+    /* Аватарка: маленький jpeg в base64, клиент сжимает сам */
+    if (body.photo === '') user.photo = null;
+    else if (/^data:image\/(jpeg|png|webp);base64,/.test(body.photo) && body.photo.length < 200000) {
+      user.photo = body.photo;
+    } else {
+      return send(res, 400, { error: 'Фото слишком большое' });
+    }
+  }
   save();
-  send(res, 200, { ok: true });
+  send(res, 200, { ok: true, user: publicUser(user) });
 });
 
 /* ---------- Чаты и сообщения ---------- */
 
 route('POST', '/api/chats/create', async (req, res, body, user) => {
-  const username = normUsername(body.username);
-  if (username === user.username) return send(res, 400, { error: 'Это ваш собственный юзернейм' });
-
-  const rec = db.usernames[username];
-  if (!rec) return send(res, 404, { error: 'Пользователь не найден' });
-
-  const peer = db.users[rec.owner];
-  if (!peer) return send(res, 404, { error: 'Пользователь не найден' });
+  let peer = null;
+  if (body.userId) {
+    peer = db.users[String(body.userId)];
+  } else {
+    const username = normUsername(body.username);
+    if (username === user.username) return send(res, 400, { error: 'Это ваш собственный юзернейм' });
+    const rec = db.usernames[username];
+    if (rec && rec.channel) return send(res, 400, { error: 'Это канал — найдите его через поиск' });
+    peer = rec && db.users[rec.owner];
+  }
+  if (!peer || peer.id === user.id) return send(res, 404, { error: 'Пользователь не найден' });
 
   const id = chatIdFor(user.id, peer.id);
   if (!db.chats[id]) {
@@ -833,17 +785,37 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
   if (!text) return send(res, 400, { error: 'Пустое сообщение' });
   if (chat.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
+  if (chat.type === 'channel' && chat.owner !== user.id) {
+    return send(res, 403, { error: 'В канале пишет только владелец' });
+  }
 
   const msg = { id: uid(), from: user.id, text, time: now(), deleted: false };
   chat.msgs.push(msg);
   save();
 
-  const peerId = chat.members.find(m => m !== user.id);
-  if (peerId) {
-    push(peerId, {
-      type: 'message', chatId: chat.id,
-      message: { id: msg.id, text, time: msg.time, out: false }
-    });
+  if (chat.type === 'channel') {
+    /* Пост уходит всем подписчикам */
+    for (const m of chat.members) {
+      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } });
+    }
+  } else {
+    const peerId = chat.members.find(m => m !== user.id);
+    const peer = peerId && db.users[peerId];
+    if (peer && peer.isBot) {
+      /* Сообщение боту — кладём в очередь, её заберёт код бота */
+      db.botUpdates[peer.id] = db.botUpdates[peer.id] || [];
+      const q = db.botUpdates[peer.id];
+      q.push({
+        update_id: (q.length ? q[q.length - 1].update_id : 0) + 1,
+        chatId: chat.id,
+        from: publicUser(user),
+        text, time: msg.time
+      });
+      if (q.length > 500) q.splice(0, q.length - 500);
+      save();
+    } else if (peerId) {
+      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } });
+    }
   }
   send(res, 200, { message: { id: msg.id, text, time: msg.time, out: true } });
 });
@@ -870,6 +842,7 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
   const chat = db.chats[body.chatId];
   const kind = body.kind === 'докс' ? 'докс' : 'скам';
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (chat.type === 'channel' || chat.service) return send(res, 400, { error: 'Жаловаться можно на личную переписку' });
 
   const peerId = chat.members.find(m => m !== user.id);
 
@@ -895,231 +868,304 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
   send(res, 200, { num });
 });
 
-/* ---------- Кошелёк ---------- */
+/* ---------- Реквизиты для получения денег ---------- */
+/* Деньги идут напрямую покупателю -> продавцу. Сервер хранит только
+   реквизиты, которые продавец сам решил показывать покупателям. */
 
-const RATES = { rub: 1, usd: 91, aed: 24.8 };
+route('POST', '/api/profile/requisites', async (req, res, body, user) => {
+  const kind = body.kind === 'card' ? 'card' : 'sbp';
+  const bank = String(body.bank || '').trim().slice(0, 30);
+  let value = String(body.value || '').replace(/[^0-9+]/g, '');
 
-/* Создание платежа. Деньги на баланс НЕ зачисляются здесь —
-   только после подтверждения от платёжной системы. */
-route('POST', '/api/wallet/payment/create', async (req, res, body, user) => {
-  const amount = Math.round(Number(body.amount));
-  const method = body.method === 'card' ? 'bank_card' : 'sbp';
-
-  if (!(amount >= 100)) return send(res, 400, { error: 'Минимум 100 ₽' });
-  if (amount > 100000) return send(res, 400, { error: 'Максимум 100 000 ₽ за раз' });
-  if (user.frozen) return send(res, 403, { error: 'Кошелёк заморожен' });
-
-  if (!YK_ENABLED) {
-    /* Тестовый режим: платёжка не подключена, зачисляем сразу и честно об этом пишем */
-    const fake = {
-      id: 'test-' + uid(),
-      amount: { value: String(amount) },
-      metadata: { userId: user.id },
-      payment_method: { type: 'bank_card', card: { first6: '555555', last4: '4444' } }
-    };
-    creditPayment(fake);
-    return send(res, 200, { testMode: true, balance: user.balance });
+  if (kind === 'card') {
+    if (!/^[0-9]{16,19}$/.test(value)) return send(res, 400, { error: 'Номер карты — 16–19 цифр' });
+  } else {
+    value = value.replace(/^8/, '+7').replace(/^7/, '+7');
+    if (!/^\+7[0-9]{10}$/.test(value)) return send(res, 400, { error: 'Номер телефона для СБП — в формате +7…' });
+    if (!bank) return send(res, 400, { error: 'Укажите банк для СБП' });
   }
 
-  const payment = await yk('POST', '/payments', {
-    amount: { value: amount.toFixed(2), currency: 'RUB' },
-    payment_method_data: { type: method },
-    confirmation: {
-      type: 'redirect',
-      return_url: (body.returnUrl || PUBLIC_URL || 'https://example.com') + '?paid=1'
-    },
-    capture: true,
-    description: 'Пополнение кошелька Newchat',
-    metadata: { userId: user.id }
-  }, uid());
-
-  if (!payment || !payment.id) {
-    return send(res, 502, { error: 'Платёжная система недоступна' });
-  }
-
-  db.payments[payment.id] = { userId: user.id, amount, credited: false, time: now() };
+  user.requisites = { kind, value, bank };
   save();
-
-  send(res, 200, {
-    paymentId: payment.id,
-    url: payment.confirmation && payment.confirmation.confirmation_url
-  });
+  send(res, 200, { requisites: user.requisites });
 });
 
-/* Приложение спрашивает: платёж прошёл? Проверяем у провайдера, не у клиента. */
-route('POST', '/api/wallet/payment/check', async (req, res, body, user) => {
-  const id = String(body.paymentId || '');
-  const rec = db.payments[id];
-  if (!rec || rec.userId !== user.id) return send(res, 404, { error: 'Платёж не найден' });
-  if (rec.credited) return send(res, 200, { status: 'ok', balance: user.balance });
-  if (!YK_ENABLED) return send(res, 200, { status: 'pending' });
-
-  const payment = await yk('GET', '/payments/' + id);
-  if (!payment) return send(res, 200, { status: 'pending' });
-
-  if (payment.status === 'succeeded') {
-    creditPayment(payment);
-    return send(res, 200, { status: 'ok', balance: user.balance });
+route('POST', '/api/profile/requisites/delete', async (req, res, body, user) => {
+  const active = Object.values(db.deals).some(d => d.seller === user.id && (d.status === 'pay' || d.status === 'paid' || d.status === 'dispute'));
+  if (active) return send(res, 400, { error: 'Есть активные сделки — реквизиты пока нужны покупателям' });
+  user.requisites = null;
+  const mine = myUsernames(user.id);
+  for (const m of mine) {
+    if (m.forSale) { db.usernames[m.u].forSale = false; db.usernames[m.u].price = 0; }
   }
-  if (payment.status === 'canceled') return send(res, 200, { status: 'canceled' });
-  send(res, 200, { status: 'pending' });
-});
-
-/* Уведомление от платёжной системы */
-route('POST', '/yookassa/webhook', async (req, res, body) => {
+  save();
   send(res, 200, { ok: true });
-  try {
-    const object = body && body.object;
-    if (!object || !object.id) return;
-
-    /* Телу уведомления не доверяем — перезапрашиваем платёж у провайдера */
-    const payment = YK_ENABLED ? await yk('GET', '/payments/' + object.id) : object;
-    if (!payment) return;
-
-    if (body.event === 'payment.succeeded' && payment.status === 'succeeded') {
-      creditPayment(payment);
-    }
-    if (body.event === 'refund.succeeded' || payment.refunded_amount) {
-      handleRefund(payment);
-    }
-  } catch (e) {
-    console.error('Ошибка вебхука оплаты:', e.message);
-  }
 });
 
-/* Что человек видит на экране вывода */
-route('GET', '/api/wallet/withdraw/info', async (req, res, body, user) => {
-  send(res, 200, withdrawInfo(user));
-});
+/* ---------- Сделки ---------- */
 
-/* Заявка на вывод */
-route('POST', '/api/wallet/withdraw', async (req, res, body, user) => {
-  const amount = Math.round(Number(body.amount));
-  const cardKeyReq = String(body.card || '');
-  const info = withdrawInfo(user);
+route('POST', '/api/deals/start', async (req, res, body, user) => {
+  const username = normUsername(body.username);
+  const rec = db.usernames[username];
 
-  if (info.blocks.length) return send(res, 403, { error: info.blocks[0] });
-  if (!(amount >= RULES.minWithdraw)) return send(res, 400, { error: `Минимум ${RULES.minWithdraw} ₽` });
-  if (amount > RULES.maxPerRequest) return send(res, 400, { error: `Максимум ${RULES.maxPerRequest.toLocaleString('ru')} ₽ за раз` });
-  if (amount > user.balance) return send(res, 400, { error: 'Недостаточно средств' });
-  if (info.usedToday + amount > RULES.maxPerDay) return send(res, 400, { error: 'Превышен дневной лимит' });
+  if (!rec || !rec.forSale || rec.frozen) return send(res, 404, { error: 'Лот не найден или уже в сделке' });
+  if (rec.owner === user.id) return send(res, 400, { error: 'Это ваш лот' });
 
-  const card = info.cards.find(c => c.key === cardKeyReq);
-  if (!card) return send(res, 400, { error: 'Выберите карту, с которой пополняли' });
-  if (amount > card.available) {
-    return send(res, 400, {
-      error: `На эту карту доступно ${card.available.toLocaleString('ru')} ₽. Остальное ещё «остывает» после пополнения.`
-    });
-  }
+  const seller = db.users[rec.owner];
+  if (!seller || !seller.requisites) return send(res, 400, { error: 'Продавец не указал реквизиты' });
 
-  /* Списываем сразу, чтобы нельзя было подать две заявки на одни деньги */
-  user.balance -= amount;
+  const active = Object.values(db.deals).filter(d => d.buyer === user.id && (d.status === 'pay' || d.status === 'paid'));
+  if (active.length >= 3) return send(res, 400, { error: 'У вас уже 3 активные сделки' });
 
-  let rest = amount;
-  for (const d of (db.deposits[user.id] || [])) {
-    if (rest <= 0) break;
-    if (d.cardKey !== cardKeyReq || d.left <= 0) continue;
-    if (now() - d.time < RULES.holdDays * 86400e3) continue;
-    const take = Math.min(d.left, rest);
-    d.left -= take;
-    rest -= take;
-  }
-
-  const payout = {
+  const deal = {
     id: uid(),
-    userId: user.id,
-    amount,
-    card: cardKeyReq,
-    cardTitle: card.title,
-    status: (PAYOUTS_AUTO && amount <= RULES.manualAbove) ? 'processing' : 'pending',
-    time: now()
+    username, price: rec.price,
+    seller: seller.id, buyer: user.id,
+    requisites: seller.requisites,
+    status: 'pay',
+    createdAt: now()
   };
-  db.payouts.push(payout);
-
-  db.history[user.id] = db.history[user.id] || [];
-  db.history[user.id].unshift({
-    amt: -amount,
-    title: 'Вывод на ' + card.title,
-    sub: payout.status === 'pending' ? 'на проверке' : 'отправлено',
-    time: now()
-  });
+  db.deals[deal.id] = deal;
+  rec.frozen = deal.id;
+  rec.forSale = false; /* с биржи лот уходит, юзернейм под замком до конца сделки */
   save();
 
-  serviceMessage(user.id, payout.status === 'pending'
-    ? `Заявка на вывод ${amount.toLocaleString('ru')} ₽ принята и проверяется. Обычно занимает до суток.`
-    : `Вывод ${amount.toLocaleString('ru')} ₽ отправлен на ${card.title}.`);
-
-  send(res, 200, { ok: true, status: payout.status, balance: user.balance });
+  serviceMessage(seller.id, `На @${username} нашёлся покупатель за ${deal.price.toLocaleString('ru')} ₽. Юзернейм заморожен до конца сделки. Ждём перевод.`);
+  push(seller.id, { type: 'state' });
+  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
 });
 
-/* ---------- Модерация выплат (только для владельца) ---------- */
+route('POST', '/api/deals/paid', async (req, res, body, user) => {
+  const deal = db.deals[String(body.dealId || '')];
+  if (!deal || deal.buyer !== user.id) return send(res, 404, { error: 'Сделка не найдена' });
+  if (deal.status !== 'pay') return send(res, 400, { error: 'Сделка уже в другом статусе' });
 
-route('POST', '/api/admin/payouts', async (req, res, body) => {
+  deal.status = 'paid';
+  deal.paidAt = now();
+  save();
+
+  const days = DEAL.confirmDays;
+  serviceMessage(deal.seller, `Покупатель отметил перевод ${deal.price.toLocaleString('ru')} ₽ за @${deal.username}. Проверьте поступление и подтвердите. Без ответа за ${days} дн. юзернейм перейдёт покупателю автоматически.`);
+  push(deal.seller, { type: 'state' });
+  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
+});
+
+route('POST', '/api/deals/confirm', async (req, res, body, user) => {
+  const deal = db.deals[String(body.dealId || '')];
+  if (!deal || deal.seller !== user.id) return send(res, 404, { error: 'Сделка не найдена' });
+  if (deal.status !== 'paid') return send(res, 400, { error: 'Покупатель ещё не отметил перевод' });
+  finishDeal(deal, 'done');
+  send(res, 200, { state: fullState(user) });
+});
+
+route('POST', '/api/deals/cancel', async (req, res, body, user) => {
+  const deal = db.deals[String(body.dealId || '')];
+  if (!deal || (deal.buyer !== user.id && deal.seller !== user.id)) return send(res, 404, { error: 'Сделка не найдена' });
+  /* Покупатель может передумать, пока не отметил перевод. Продавец — только пока нет оплаты. */
+  if (deal.status !== 'pay') return send(res, 400, { error: 'После отметки о переводе отмена только через спор' });
+  finishDeal(deal, 'cancelled');
+  send(res, 200, { state: fullState(user) });
+});
+
+route('POST', '/api/deals/dispute', async (req, res, body, user) => {
+  const deal = db.deals[String(body.dealId || '')];
+  if (!deal || deal.seller !== user.id) return send(res, 404, { error: 'Сделка не найдена' });
+  if (deal.status !== 'paid') return send(res, 400, { error: 'Спор открывается после отметки «Я перевёл»' });
+
+  deal.status = 'dispute';
+  deal.disputeAt = now();
+  save();
+
+  serviceMessage(deal.buyer, `Продавец @${(db.users[deal.seller] || {}).username || ''} сообщил, что перевод за @${deal.username} не пришёл. Сделка на проверке у модерации.`);
+  push(deal.buyer, { type: 'state' });
+  send(res, 200, { state: fullState(user) });
+});
+
+/* Модерация споров — только для владельца сервиса */
+route('POST', '/api/admin/deals', async (req, res, body) => {
   if (!ADMIN_TOKEN || body.adminToken !== ADMIN_TOKEN) return send(res, 403, { error: 'Нет доступа' });
 
   if (body.action === 'list') {
     return send(res, 200, {
-      payouts: db.payouts.slice(-100).reverse().map(p => {
-        const u = db.users[p.userId];
-        return Object.assign({}, p, {
-          user: u ? { name: u.name, username: u.username, phone: u.phone, trust: u.trust } : null
-        });
-      })
+      deals: Object.values(db.deals)
+        .filter(d => d.status === 'dispute')
+        .map(d => Object.assign({}, d, {
+          sellerUser: publicUser(db.users[d.seller]),
+          buyerUser: publicUser(db.users[d.buyer])
+        }))
     });
   }
 
-  const payout = db.payouts.find(p => p.id === body.payoutId);
-  if (!payout) return send(res, 404, { error: 'Заявка не найдена' });
-  const user = db.users[payout.userId];
+  const deal = db.deals[String(body.dealId || '')];
+  if (!deal) return send(res, 404, { error: 'Сделка не найдена' });
 
-  if (body.action === 'approve') {
-    payout.status = 'done';
-    save();
-    if (user) serviceMessage(user.id, `Вывод ${payout.amount.toLocaleString('ru')} ₽ выполнен.`);
+  if (body.action === 'release') { /* перевод был — отдать юзернейм покупателю */
+    finishDeal(deal, 'done');
     return send(res, 200, { ok: true });
   }
-
-  if (body.action === 'reject') {
-    payout.status = 'rejected';
-    payout.reason = String(body.reason || 'не прошло проверку');
-    if (user) {
-      user.balance += payout.amount;  // возвращаем деньги на баланс
-      serviceMessage(user.id, `Вывод ${payout.amount.toLocaleString('ru')} ₽ отклонён: ${payout.reason}. Деньги вернулись на баланс.`);
-      push(user.id, { type: 'state' });
-    }
-    save();
+  if (body.action === 'cancel') { /* перевода не было — вернуть лот, наказать покупателя */
+    const buyer = db.users[deal.buyer];
+    if (buyer) buyer.trust = Math.max(0, (buyer.trust || 0) - 20);
+    finishDeal(deal, 'cancelled');
     return send(res, 200, { ok: true });
   }
-
   send(res, 400, { error: 'Неизвестное действие' });
 });
 
-/* ---------- Премиум ---------- */
+/* ---------- Поиск ---------- */
 
-route('POST', '/api/premium/buy', async (req, res, body, user) => {
-  if (user.frozen) return send(res, 403, { error: 'Кошелёк заморожен' });
-  if (user.balance < PREMIUM.price) {
-    return send(res, 400, { error: `Не хватает ${(PREMIUM.price - user.balance).toLocaleString('ru')} ₽. Пополните кошелёк.` });
+route('POST', '/api/search', async (req, res, body, user) => {
+  const q = String(body.q || '').trim().toLowerCase().slice(0, 30);
+  if (q.length < 2) return send(res, 200, { results: [] });
+
+  const results = [];
+
+  for (const u of Object.values(db.users)) {
+    if (u.id === user.id || !u.username) continue;
+    const hit = u.username.includes(q) || (u.name || '').toLowerCase().includes(q);
+    if (hit) results.push({ kind: u.isBot ? 'bot' : 'user', item: publicUser(u) });
+    if (results.length >= 15) break;
   }
 
-  user.balance -= PREMIUM.price;
-  /* Если премиум ещё действует — продлеваем, а не обнуляем */
-  const from = isPremium(user) ? user.premiumUntil : now();
-  user.premiumUntil = from + PREMIUM.days * 86400e3;
+  for (const c of Object.values(db.chats)) {
+    if (c.type !== 'channel') continue;
+    const hit = (c.title || '').toLowerCase().includes(q) || (c.uname || '').includes(q);
+    if (hit) results.push({
+      kind: 'channel',
+      item: { id: c.id, name: c.title, username: c.uname || '', subs: c.members.length, member: c.members.includes(user.id) }
+    });
+    if (results.length >= 25) break;
+  }
 
-  db.history[user.id] = db.history[user.id] || [];
-  db.history[user.id].unshift({
-    amt: -PREMIUM.price,
-    title: 'Newchat Premium',
-    sub: PREMIUM.days + ' дней · ' + PREMIUM.slots + ' слотов',
-    time: now()
-  });
+  send(res, 200, { results });
+});
+
+/* ---------- Каналы ---------- */
+
+route('POST', '/api/channels/create', async (req, res, body, user) => {
+  const title = String(body.title || '').trim().slice(0, 40);
+  const uname = normUsername(body.username);
+  if (!title) return send(res, 400, { error: 'Введите название канала' });
+  if (uname && db.usernames[uname]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
+
+  const mine = Object.values(db.chats).filter(c => c.type === 'channel' && c.owner === user.id);
+  if (mine.length >= 5) return send(res, 400, { error: 'Не больше 5 каналов на аккаунт' });
+
+  const id = 'ch:' + uid();
+  db.chats[id] = { id, type: 'channel', title, uname: uname || '', owner: user.id, members: [user.id], msgs: [] };
+  if (uname) db.usernames[uname] = { owner: user.id, main: false, forSale: false, price: 0, channel: id };
+  save();
+  send(res, 200, { chatId: id, chats: userChats(user.id) });
+});
+
+route('POST', '/api/channels/join', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || chat.type !== 'channel') return send(res, 404, { error: 'Канал не найден' });
+  if (!chat.members.includes(user.id)) {
+    chat.members.push(user.id);
+    save();
+    push(chat.owner, { type: 'state' });
+  }
+  send(res, 200, { chatId: chat.id, chats: userChats(user.id) });
+});
+
+route('POST', '/api/channels/leave', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || chat.type !== 'channel') return send(res, 404, { error: 'Канал не найден' });
+  if (chat.owner === user.id) return send(res, 400, { error: 'Владелец не может покинуть свой канал' });
+  chat.members = chat.members.filter(m => m !== user.id);
+  save();
+  send(res, 200, { chats: userChats(user.id) });
+});
+
+/* ---------- Боты ---------- */
+/* Мини-платформа как BotFather: создал бота — получил токен.
+   Дальше своим кодом опрашиваешь /api/bot/<токен>/updates и
+   отвечаешь через /api/bot/<токен>/send. */
+
+route('POST', '/api/bots/create', async (req, res, body, user) => {
+  const name = String(body.name || '').trim().slice(0, 30);
+  const uname = normUsername(body.username);
+
+  if (!name) return send(res, 400, { error: 'Введите имя бота' });
+  if (!uname.endsWith('bot')) return send(res, 400, { error: 'Юзернейм бота должен заканчиваться на «bot»' });
+  if (uname.length < 5) return send(res, 400, { error: 'Юзернейм — минимум 5 символов' });
+  if (db.usernames[uname]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
+  if (myBots(user.id).length >= BOTS_PER_USER) return send(res, 400, { error: `Не больше ${BOTS_PER_USER} ботов на аккаунт` });
+
+  const bot = {
+    id: uid(), isBot: true, owner: user.id,
+    name, username: uname, trust: 100, createdAt: now()
+  };
+  db.users[bot.id] = bot;
+  db.usernames[uname] = { owner: bot.id, main: true, forSale: false, price: 0 };
+
+  const token = bot.id + ':' + crypto.randomBytes(16).toString('hex');
+  db.botTokens[token] = bot.id;
+  db.botUpdates[bot.id] = [];
   save();
 
-  const until = new Date(user.premiumUntil).toLocaleDateString('ru');
-  serviceMessage(user.id, `Премиум активен до ${until}. Теперь у вас ${PREMIUM.slots} слотов под юзернеймы.`);
-  send(res, 200, { state: fullState(user) });
+  send(res, 200, { bot: { id: bot.id, name, username: uname, token }, bots: myBots(user.id) });
 });
+
+route('POST', '/api/bots/delete', async (req, res, body, user) => {
+  const bot = db.users[String(body.botId || '')];
+  if (!bot || !bot.isBot || bot.owner !== user.id) return send(res, 404, { error: 'Бот не найден' });
+
+  for (const t of Object.keys(db.botTokens)) if (db.botTokens[t] === bot.id) delete db.botTokens[t];
+  delete db.botUpdates[bot.id];
+  if (bot.username && db.usernames[bot.username]) delete db.usernames[bot.username];
+  delete db.users[bot.id];
+  save();
+  send(res, 200, { bots: myBots(user.id) });
+});
+
+/* API для кода бота — авторизация токеном в адресе */
+async function handleBotApi(req, res, urlPath, body) {
+  const m = urlPath.match(/^\/api\/bot\/([^/]+)\/(updates|send|me)$/);
+  if (!m) return send(res, 404, { error: 'Не найдено' });
+
+  const botId = db.botTokens[m[1]];
+  const bot = botId && db.users[botId];
+  if (!bot) return send(res, 401, { error: 'Неверный токен бота' });
+
+  if (m[2] === 'me') return send(res, 200, { bot: publicUser(bot) });
+
+  if (m[2] === 'updates') {
+    const offset = Number(body.offset || 0);
+    const list = (db.botUpdates[bot.id] || []).filter(u => u.update_id > offset);
+    return send(res, 200, { updates: list.slice(0, 100) });
+  }
+
+  /* send */
+  const chat = db.chats[String(body.chatId || '')];
+  const text = String(body.text || '').trim().slice(0, 4000);
+  if (!chat || !chat.members.includes(bot.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (!text) return send(res, 400, { error: 'Пустое сообщение' });
+
+  const msg = { id: uid(), from: bot.id, text, time: now(), deleted: false };
+  chat.msgs.push(msg);
+  save();
+  const peerId = chat.members.find(x => x !== bot.id);
+  if (peerId) push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } });
+  send(res, 200, { ok: true, messageId: msg.id });
+}
+
+/* ---------- Премиум за приглашения ---------- */
+
+function awardInvite(inviter) {
+  inviter.inviteCount = (inviter.inviteCount || 0) + 1;
+  if (inviter.inviteCount % PREMIUM.invites === 0) {
+    const from = isPremium(inviter) ? inviter.premiumUntil : now();
+    inviter.premiumUntil = from + PREMIUM.days * 86400e3;
+    const until = new Date(inviter.premiumUntil).toLocaleDateString('ru');
+    serviceMessage(inviter.id, `Вы пригласили ${inviter.inviteCount} друзей — премиум активен до ${until}! Слотов под юзернеймы: ${PREMIUM.slots}.`);
+  } else {
+    const left = PREMIUM.invites - (inviter.inviteCount % PREMIUM.invites);
+    serviceMessage(inviter.id, `По вашей ссылке зарегистрировался новый человек. До премиума осталось приглашений: ${left}.`);
+  }
+  push(inviter.id, { type: 'state' });
+}
 
 /* ---------- Юзернеймы и биржа ---------- */
 
@@ -1147,8 +1193,12 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
   const rec = db.usernames[username];
 
   if (!rec || rec.owner !== user.id) return send(res, 403, { error: 'Это не ваш юзернейм' });
+  if (rec.channel) return send(res, 400, { error: 'Юзернейм канала продать нельзя' });
+  if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
   if (rec.main) return send(res, 400, { error: 'Основной юзернейм продать нельзя' });
+  if ((user.trust || 0) < SELL_MIN_TRUST) return send(res, 400, { error: 'Продавать можно с доверием от ' + SELL_MIN_TRUST + '%' });
+  if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты в «Сделках» — их увидит покупатель' });
 
   rec.forSale = true;
   rec.price = price;
@@ -1156,50 +1206,15 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
   send(res, 200, { usernames: myUsernames(user.id) });
 });
 
-route('POST', '/api/usernames/buy', async (req, res, body, user) => {
+route('POST', '/api/usernames/unsell', async (req, res, body, user) => {
   const username = normUsername(body.username);
   const rec = db.usernames[username];
-
-  if (!rec || !rec.forSale) return send(res, 404, { error: 'Лот не найден' });
-  if (rec.owner === user.id) return send(res, 400, { error: 'Это ваш лот' });
-  if (user.frozen) return send(res, 403, { error: 'Кошелёк заморожен' });
-  if (user.balance < rec.price) return send(res, 400, { error: 'Недостаточно средств' });
-  if (myUsernames(user.id).length >= slotLimit(user)) {
-    return send(res, 400, { error: `Нет свободных слотов. Премиум даёт ${PREMIUM.slots}.` });
-  }
-
-  const seller = db.users[rec.owner];
-  const price = rec.price;
-  /* Комиссия площадки — на неё живёт сервис */
-  const fee = Math.round(price * FEE_PERCENT / 100);
-  const toSeller = price - fee;
-
-  user.balance -= price;
-  seller.balance += toSeller;
-
-  db.history[user.id] = db.history[user.id] || [];
-  db.history[user.id].unshift({ amt: -price, title: 'Покупка @' + username, sub: 'биржа юзернеймов', time: now() });
-  db.history[seller.id] = db.history[seller.id] || [];
-  db.history[seller.id].unshift({
-    amt: toSeller,
-    title: 'Продажа @' + username,
-    sub: fee ? `комиссия ${FEE_PERCENT}% — ${fee.toLocaleString('ru')} ₽` : 'биржа юзернеймов',
-    time: now()
-  });
-
-  rec.owner = user.id;
+  if (!rec || rec.owner !== user.id) return send(res, 403, { error: 'Это не ваш юзернейм' });
+  if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   rec.forSale = false;
   rec.price = 0;
-  rec.main = false;
   save();
-
-  serviceMessage(seller.id,
-    `Юзернейм @${username} продан за ${price.toLocaleString('ru')} ₽.` +
-    (fee ? ` Комиссия ${FEE_PERCENT}% — ${fee.toLocaleString('ru')} ₽.` : '') +
-    ` На кошелёк зачислено ${toSeller.toLocaleString('ru')} ₽. Тратить внутри можно сразу, вывод — после проверки.`);
-  push(seller.id, { type: 'state' });
-
-  send(res, 200, { state: fullState(user) });
+  send(res, 200, { usernames: myUsernames(user.id) });
 });
 
 /* ---------- Верификация ---------- */
@@ -1224,12 +1239,7 @@ route('GET', '/api/config', async (req, res) => {
     telegram: TG_ENABLED,
     botName: TG_BOT_NAME,
     sms: SMS_ENABLED,
-    payments: YK_ENABLED,
-    rules: {
-      minWithdraw: RULES.minWithdraw,
-      holdDays: RULES.holdDays,
-      maxPerDay: RULES.maxPerDay
-    }
+    deal: { payHours: DEAL.payHours, confirmDays: DEAL.confirmDays }
   });
 });
 
@@ -1306,8 +1316,7 @@ const OPEN_ROUTES = [
   'POST /api/auth/telegram/start',
   'POST /api/auth/telegram/check',
   'POST /telegram/webhook',
-  'POST /yookassa/webhook',
-  'POST /api/admin/payouts',
+  'POST /api/admin/deals',
   'GET /api/config',
   'GET /api/health'
 ];
@@ -1323,6 +1332,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = req.url.split('?')[0];
+
+  /* API ботов: авторизация токеном в адресе, обычный вход не нужен */
+  if (url.startsWith('/api/bot/')) {
+    try {
+      const body = req.method === 'POST' ? await readBody(req) : {};
+      return await handleBotApi(req, res, url, body);
+    } catch (e) {
+      console.error(e);
+      return send(res, 500, { error: 'Ошибка сервера' });
+    }
+  }
+
   const key = req.method + ' ' + url;
   const handler = routes[key];
 
