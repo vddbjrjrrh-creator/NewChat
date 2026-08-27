@@ -522,6 +522,7 @@ body{
       <p class="sub">В Telegram откроется наш бот.<br>Нажмите <b>«Старт»</b>, затем кнопку<br><b>«📱 Подтвердить номер»</b>.</p>
       <div class="progress-line" style="margin:0 0 20px"><i style="width:100%;animation:slide 1.4s infinite"></i></div>
       <button class="btn" onclick="openTgLink()">Открыть Telegram</button>
+      <button class="btn ghost" onclick="manualCheck()">Я подтвердил номер</button>
       <button class="btn ghost" onclick="cancelTg()">Отмена</button>
     </div>
   </div>
@@ -1062,13 +1063,19 @@ let tgSession=null;
 let tgLink='';
 let tgPoll=null;
 
+/* Сессию храним на устройстве: пока человек в Telegram,
+   страница может перезагрузиться и всё забыть */
+const tgStore={
+  get(){try{return JSON.parse(localStorage.getItem('newchat_tg')||'null')}catch(e){return window.__tg||null}},
+  set(v){try{localStorage.setItem('newchat_tg',JSON.stringify(v))}catch(e){window.__tg=v}},
+  clear(){try{localStorage.removeItem('newchat_tg')}catch(e){window.__tg=null}}
+};
+
 async function loadConfig(){
   try{
     const cfg=await api('/api/config');
     if(cfg.telegram){
       document.getElementById('tg-btn').style.display='block';
-      document.getElementById('auth-or').style.display='flex';
-      /* Если SMS не подключены, вход по номеру только запутает — прячем */
       document.getElementById('phone-block').style.display=cfg.sms?'block':'none';
       document.getElementById('auth-or').style.display=cfg.sms?'flex':'none';
     }
@@ -1079,35 +1086,72 @@ async function tgLogin(){
     const r=await api('/api/auth/telegram/start',{});
     tgSession=r.session;
     tgLink=r.link;
+    tgStore.set({session:tgSession,link:tgLink,started:Date.now()});
     show('s-tgwait');
-    openTgLink();
     startTgPoll();
+    openTgLink();
   }catch(e){}
 }
 function openTgLink(){
-  if(tgLink)window.open(tgLink,'_blank');
+  if(!tgLink)return;
+  /* В приложении window.open часто заблокирован — тогда уходим напрямую */
+  const w=window.open(tgLink,'_blank');
+  if(!w)location.href=tgLink;
 }
+
+/* Опрос сервера: ждём, пока человек подтвердит номер в боте */
 function startTgPoll(){
   clearInterval(tgPoll);
-  let tries=0;
-  tgPoll=setInterval(async()=>{
-    if(++tries>200){clearInterval(tgPoll);return}
-    try{
-      const r=await api('/api/auth/telegram/check',{session:tgSession});
-      if(r.status==='ok'){
-        clearInterval(tgPoll);
-        token=r.token;tokenStore.set(token);
-        if(r.needsSetup){show('s-setup')}
-        else{S=r.state;connectWS();go('s-chats')}
-      }
-    }catch(e){clearInterval(tgPoll);show('s-auth')}
-  },2000);
+  tgPoll=setInterval(checkTg,2000);
+  checkTg();
+}
+async function checkTg(){
+  if(!tgSession)return;
+  const saved=tgStore.get();
+  if(saved&&Date.now()-saved.started>15*60e3){cancelTg();toast('Время вышло, попробуйте снова');return}
+
+  let res;
+  try{
+    res=await fetch(API+'/api/auth/telegram/check',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session:tgSession})
+    });
+  }catch(e){
+    /* Сеть моргнула — просто пробуем ещё раз, не сбрасываем вход */
+    return;
+  }
+
+  let d={};
+  try{d=await res.json()}catch(e){return}
+
+  if(res.status===404||res.status===400){cancelTg();toast(d.error||'Начните вход заново');return}
+  if(d.status!=='ok')return;
+
+  clearInterval(tgPoll);
+  tgStore.clear();
+  tgSession=null;
+  token=d.token;tokenStore.set(token);
+
+  if(d.needsSetup){show('s-setup')}
+  else{S=d.state;connectWS();go('s-chats')}
+}
+async function manualCheck(){
+  toast('Проверяем…');
+  await checkTg();
+  if(tgSession)toast('Пока не подтверждено. Нажмите в боте «Подтвердить номер»');
 }
 function cancelTg(){
   clearInterval(tgPoll);
-  tgSession=null;
+  tgSession=null;tgLink='';
+  tgStore.clear();
   show('s-auth');
 }
+/* Вернулись в приложение из Telegram — сразу проверяем, не подтвердили ли */
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&tgSession)checkTg();
+});
+window.addEventListener('focus',()=>{if(tgSession)checkTg()});
 
 let resendTimer=null;
 function startResendTimer(){
@@ -1515,7 +1559,19 @@ async function boot(){
     document.getElementById('no-server').style.display='block';
     return;
   }
-  if(!token){show('s-auth');loadConfig();return}
+  if(!token){
+    show('s-auth');
+    loadConfig();
+    /* Если человек ушёл в Telegram и вернулся — продолжаем ждать подтверждения */
+    const saved=tgStore.get();
+    if(saved&&Date.now()-saved.started<15*60e3){
+      tgSession=saved.session;
+      tgLink=saved.link;
+      show('s-tgwait');
+      startTgPoll();
+    }
+    return;
+  }
   try{
     const r=await api('/api/state');
     S=r.state;connectWS();go('s-chats');
