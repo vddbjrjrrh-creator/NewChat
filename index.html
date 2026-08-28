@@ -49,24 +49,39 @@ html.dark .tgl{background:#33365C}
 html.dark .tgl.on{background:var(--accent)}
 
 /* ===== Живой фон: стеклянные капли, которые переливаются и плывут ===== */
-.lava{position:fixed;inset:-12%;z-index:0;pointer-events:none;overflow:hidden;filter:blur(46px) saturate(1.35)}
-.lava i{position:absolute;display:block;border-radius:50%;opacity:.55;will-change:transform;animation:drift 26s ease-in-out infinite alternate}
-.lava .l1{width:62vw;height:62vw;left:-16vw;top:-8vh;background:radial-gradient(circle at 32% 30%,#B39DFF,#6C5CE7 62%,transparent 74%)}
-.lava .l2{width:52vw;height:52vw;right:-14vw;top:16vh;background:radial-gradient(circle at 60% 40%,#8FD0FF,#4D9FEF 60%,transparent 75%);animation-duration:31s;animation-delay:-9s}
-.lava .l3{width:46vw;height:46vw;left:6vw;bottom:-6vh;background:radial-gradient(circle at 40% 55%,#F1B7FF,#B06CE7 58%,transparent 76%);animation-duration:23s;animation-delay:-15s}
-.lava .l4{width:34vw;height:34vw;right:8vw;bottom:14vh;background:radial-gradient(circle at 50% 50%,#9CE8E4,#4FC7D8 55%,transparent 78%);animation-duration:35s;animation-delay:-4s;opacity:.4}
-.lava .l5{width:24vw;height:24vw;left:38vw;top:30vh;background:radial-gradient(circle at 45% 40%,#CFC5FF,#8B7CFF 58%,transparent 80%);animation-duration:19s;animation-delay:-11s;opacity:.42}
+.lava{position:fixed;inset:-10%;z-index:0;pointer-events:none;overflow:hidden}
+.lava i{position:absolute;display:block;border-radius:50%;will-change:transform;animation:drift 24s ease-in-out infinite alternate}
+/* Слой 1: сочные цветные пятна */
+.lava .l1,.lava .l2,.lava .l3{filter:blur(34px) saturate(1.6)}
+.lava .l1{width:64vw;height:64vw;left:-16vw;top:-6vh;opacity:.8;background:radial-gradient(circle at 32% 30%,#C7B5FF 0%,#7E6BF0 46%,rgba(108,92,231,0) 70%)}
+.lava .l2{width:56vw;height:56vw;right:-14vw;top:14vh;opacity:.75;background:radial-gradient(circle at 60% 40%,#9FE0FF 0%,#3FA4F5 48%,rgba(63,164,245,0) 72%);animation-duration:31s;animation-delay:-9s}
+.lava .l3{width:50vw;height:50vw;left:2vw;bottom:-8vh;opacity:.7;background:radial-gradient(circle at 40% 55%,#FFC4F7 0%,#C46CE7 46%,rgba(196,108,231,0) 72%);animation-duration:23s;animation-delay:-15s}
+/* Слой 2: чёткие стеклянные пузыри с бликом, как настоящие капли */
+.lava .g{filter:none;border-radius:50%;
+  background:radial-gradient(circle at 33% 28%, rgba(255,255,255,.85) 0%, rgba(255,255,255,.25) 14%, rgba(190,175,255,.14) 34%, rgba(120,100,240,.28) 72%, rgba(90,70,220,.5) 88%, rgba(255,255,255,.6) 97%);
+  box-shadow:inset -8px -10px 24px rgba(90,70,220,.35), inset 6px 8px 18px rgba(255,255,255,.7), 0 18px 40px rgba(90,80,200,.18);
+}
+.lava .g::after{content:'';position:absolute;left:18%;top:12%;width:34%;height:22%;border-radius:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,0));transform:rotate(-18deg)}
+.lava .g1{width:34vw;height:34vw;right:-6vw;top:6vh;animation-duration:29s;animation-delay:-3s}
+.lava .g2{width:20vw;height:20vw;left:8vw;top:38vh;animation-duration:21s;animation-delay:-12s}
+.lava .g3{width:26vw;height:26vw;right:10vw;bottom:8vh;animation-duration:34s;animation-delay:-7s}
+.lava .g4{width:12vw;height:12vw;left:40vw;top:16vh;animation-duration:17s;animation-delay:-14s}
+.lava .g5{width:9vw;height:9vw;left:24vw;bottom:26vh;animation-duration:26s;animation-delay:-5s}
 @keyframes drift{
   0%{transform:translate3d(0,0,0) scale(1) rotate(0deg)}
-  33%{transform:translate3d(9vw,-7vh,0) scale(1.14) rotate(14deg)}
-  66%{transform:translate3d(-7vw,9vh,0) scale(.92) rotate(-10deg)}
-  100%{transform:translate3d(5vw,4vh,0) scale(1.08) rotate(6deg)}
+  33%{transform:translate3d(8vw,-6vh,0) scale(1.12) rotate(12deg)}
+  66%{transform:translate3d(-6vw,8vh,0) scale(.93) rotate(-9deg)}
+  100%{transform:translate3d(5vw,4vh,0) scale(1.06) rotate(5deg)}
 }
-html.dark .lava{filter:blur(52px) saturate(1.25);opacity:.9}
-html.dark .lava i{opacity:.34}
-html.dark .lava .l1{background:radial-gradient(circle at 32% 30%,#6C5CE7,#2E2470 62%,transparent 76%)}
-html.dark .lava .l2{background:radial-gradient(circle at 60% 40%,#3E7DD8,#1E3B78 60%,transparent 78%)}
-html.dark .lava .l3{background:radial-gradient(circle at 40% 55%,#8E4CC7,#3D1E62 58%,transparent 78%)}
+html.dark .lava .l1{opacity:.5;background:radial-gradient(circle at 32% 30%,#8B7CFF 0%,#4638A8 48%,rgba(70,56,168,0) 72%)}
+html.dark .lava .l2{opacity:.45;background:radial-gradient(circle at 60% 40%,#4C8FE8 0%,#1F3C86 50%,rgba(31,60,134,0) 74%)}
+html.dark .lava .l3{opacity:.45;background:radial-gradient(circle at 40% 55%,#A85CD8 0%,#4A2072 48%,rgba(74,32,114,0) 74%)}
+html.dark .lava .g{
+  background:radial-gradient(circle at 33% 28%, rgba(255,255,255,.35) 0%, rgba(200,190,255,.1) 16%, rgba(120,100,240,.1) 36%, rgba(100,84,230,.22) 74%, rgba(150,130,255,.4) 90%, rgba(220,210,255,.35) 98%);
+  box-shadow:inset -8px -10px 24px rgba(60,45,160,.5), inset 6px 8px 18px rgba(200,190,255,.28), 0 18px 40px rgba(0,0,0,.4);
+}
+html.dark .lava .g::after{background:linear-gradient(180deg,rgba(255,255,255,.5),rgba(255,255,255,0))}
 @media (prefers-reduced-motion: reduce){.lava i{animation:none}}
 
 /* ===== Тёмная тема: стекло глубокого синего, а не серость ===== */
@@ -93,6 +108,7 @@ html.dark .icon-btn{color:var(--ink)}
 html.dark .report-opt,html.dark .set-row.glass-card,html.dark .pitem.glass-card{color:var(--ink)}
 
 /* ===== Дыхание интерфейса ===== */
+.hdr h1{background:linear-gradient(105deg,var(--ink) 30%,var(--accent) 90%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.5px}
 @keyframes screenIn{from{opacity:0;transform:translateY(10px) scale(.995)}to{opacity:1;transform:none}}
 .screen.active{animation:screenIn .26s cubic-bezier(.3,.8,.4,1)}
 .btn{transition:transform .16s,box-shadow .2s}
@@ -591,7 +607,7 @@ body{
 </style>
 </head>
 <body>
-<div class="lava" aria-hidden="true"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><i class="l5"></i></div>
+<div class="lava" aria-hidden="true"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="g g1"></i><i class="g g2"></i><i class="g g3"></i><i class="g g4"></i><i class="g g5"></i></div>
 <div class="app" id="app">
 
   <!-- ЗАГРУЗКА: сервер на бесплатном тарифе может просыпаться до минуты -->
@@ -805,6 +821,13 @@ body{
       <button class="icon-btn" id="chat-menu-btn" onclick="openChatMenu()"><svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
     </div>
     <div class="msgs" id="chat-msgs"></div>
+    <div id="reply-bar" style="display:none;align-items:center;gap:10px;padding:8px 14px;margin:0 12px;border-radius:14px 14px 0 0;background:var(--accent-soft);border-left:3px solid var(--accent)">
+      <div style="flex:1;min-width:0">
+        <b style="font-size:.76rem;color:var(--accent)" id="reply-name"></b>
+        <div style="font-size:.78rem;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="reply-text"></div>
+      </div>
+      <button class="icon-btn" onclick="clearReply()" style="width:30px;height:30px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="17" height="17"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
     <div class="composer">
       <label class="icon-btn" for="msg-photo" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></label>
       <input type="file" id="msg-photo" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendPhoto(this)">
@@ -829,6 +852,12 @@ body{
       <div class="grip"></div>
       <h3>Сообщение</h3>
       <div id="msgmenu-body"></div>
+    </div>
+
+    <div class="sheet" id="sheet-forward">
+      <div class="grip"></div>
+      <h3>Переслать</h3>
+      <div id="fwd-list" style="max-height:52vh;overflow-y:auto"></div>
     </div>
 
     <div class="sheet" id="sheet-report">
@@ -1833,6 +1862,8 @@ function renderMsgs(c){
     let body='';
     if(m.deleted)body='<i style="opacity:.7">удалено</i>';
     else{
+      if(m.fwd)body+='<div style="font-size:.72rem;opacity:.75;margin-bottom:3px">↪ Переслано от <b>'+esc(m.fwd.name)+'</b></div>';
+      if(m.reply)body+='<div style="border-left:2.5px solid '+(m.out?'rgba(255,255,255,.7)':'var(--accent)')+';padding:2px 8px;margin-bottom:5px;border-radius:4px;background:'+(m.out?'rgba(255,255,255,.15)':'var(--accent-soft)')+'"><b style="font-size:.72rem">'+esc(m.reply.name)+'</b><div style="font-size:.76rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.reply.text)+'</div></div>';
       if(m.media&&m.media.kind==='photo')body+='<img src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">';
       if(m.media&&m.media.kind==='voice')body+='<audio controls preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></audio>';
       const stub=m.media&&(m.text==='📷 Фото'||m.text==='🎤 Голосовое сообщение');
@@ -1843,7 +1874,7 @@ function renderMsgs(c){
       reacts='<div class="reacts">'+Object.entries(m.reactions).map(([e,ids])=>
         '<span class="react-chip" onclick="event.stopPropagation();reactMsg(\''+m.id+'\',\''+e+'\')">'+e+' '+ids.length+'</span>').join('')+'</div>';
     }
-    return '<div class="msg '+(m.out?'out':'in')+'"'+del+' style="cursor:pointer">'+body+reacts+
+    return '<div class="msg '+(m.out?'out':'in')+'"'+del+' data-mid="'+m.id+'" style="cursor:pointer">'+body+reacts+
       '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+fmtTime(m.time)+'</span></div>';
   }).join('');
   box.scrollTop=box.scrollHeight;
@@ -1853,12 +1884,73 @@ async function sendMsg(){
   const text=inp.value.trim();
   if(!text||!currentChat)return;
   inp.value='';
+  const rt=replyTo;
+  clearReply();
   try{
-    const r=await api('/api/messages/send',{chatId:currentChat,text});
+    const r=await api('/api/messages/send',{chatId:currentChat,text,replyTo:rt||undefined});
     const c=S.chats.find(x=>x.id===currentChat);
     c.msgs.push(r.message);
     renderMsgs(c);
   }catch(e){inp.value=text}
+}
+/* Свайп вправо по сообщению — быстрый ответ */
+let swX=0,swY=0,swEl=null;
+document.getElementById('chat-msgs').addEventListener('touchstart',e=>{
+  const el=e.target.closest('.msg');
+  if(!el||!el.dataset.mid)return;
+  swEl=el;swX=e.touches[0].clientX;swY=e.touches[0].clientY;
+},{passive:true});
+document.getElementById('chat-msgs').addEventListener('touchmove',e=>{
+  if(!swEl)return;
+  const dx=e.touches[0].clientX-swX,dy=e.touches[0].clientY-swY;
+  if(Math.abs(dy)>34){swEl.style.transform='';swEl=null;return}
+  if(dx>0)swEl.style.transform='translateX('+Math.min(dx,64)+'px)';
+},{passive:true});
+document.getElementById('chat-msgs').addEventListener('touchend',e=>{
+  if(!swEl)return;
+  const dx=e.changedTouches[0].clientX-swX;
+  swEl.style.transition='transform .18s';
+  swEl.style.transform='';
+  setTimeout(()=>{if(swEl)swEl.style.transition=''},200);
+  if(dx>46)setReply(swEl.dataset.mid);
+  swEl=null;
+},{passive:true});
+
+let replyTo=null;
+function setReply(id){
+  const c=S.chats.find(x=>x.id===currentChat);
+  const m=c&&c.msgs.find(x=>x.id===id);
+  if(!m||m.deleted)return;
+  replyTo=id;
+  document.getElementById('reply-name').textContent=m.out?'Вы':((c.peer||{}).name||'');
+  document.getElementById('reply-text').textContent=m.text||(m.media?(m.media.kind==='photo'?'📷 Фото':'🎤 Голосовое'):'');
+  document.getElementById('reply-bar').style.display='flex';
+  document.getElementById('composer-input').focus();
+}
+function clearReply(){
+  replyTo=null;
+  document.getElementById('reply-bar').style.display='none';
+}
+let fwdMsgId=null;
+function openForward(id){
+  fwdMsgId=id;
+  const list=S.chats.filter(c=>!c.service&&c.id!==currentChat&&(c.type==='dm'||c.mine));
+  const box=document.getElementById('fwd-list');
+  box.innerHTML=list.length?list.map(c=>{
+    const p=c.peer||{};
+    return '<div class="chat-item" onclick="doForward(\''+c.id+'\')" style="padding:10px 4px">'+avaHtml(p)+
+      '<div class="mid"><div class="name">'+esc(p.name||'')+(c.type==='channel'?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">канал</span>':'')+'</div></div></div>';
+  }).join(''):'<div class="empty" style="padding:20px"><b>Некуда пересылать</b><p>Начните ещё один чат или создайте канал.</p></div>';
+  openSheet('sheet-forward');
+}
+async function doForward(toChatId){
+  try{
+    const r=await api('/api/messages/forward',{fromChatId:currentChat,messageId:fwdMsgId,toChatId});
+    const c=S.chats.find(x=>x.id===toChatId);
+    if(c)c.msgs.push(r.message);
+    closeSheets();
+    toast('Переслано');
+  }catch(e){}
 }
 function openMsgMenu(id){
   const c=S.chats.find(x=>x.id===currentChat);
@@ -1868,6 +1960,8 @@ function openMsgMenu(id){
   b.innerHTML=
     '<div class="react-row">'+['❤️','👍','🔥','😂','😮','💩'].map(e=>
       '<button onclick="closeSheets();reactMsg(\''+id+'\',\''+e+'\')">'+e+'</button>').join('')+'</div>'+
+    '<button class="report-opt" onclick="closeSheets();setReply(\''+id+'\')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M9 14l-5-5 5-5"/><path d="M4 9h9a7 7 0 017 7v3"/></svg></span><span><b>Ответить</b><span>Цитата появится над полем ввода</span></span></button>'+
+    '<button class="report-opt" onclick="closeSheets();openForward(\''+id+'\')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M15 14l5-5-5-5"/><path d="M20 9h-9a7 7 0 00-7 7v3"/></svg></span><span><b>Переслать</b><span>В другой чат или канал</span></span></button>'+
     '<button class="report-opt" onclick="copyText(document.getElementById(\'msg-src\').value);closeSheets();toast(\'Скопировано\')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="9" y="9" width="11" height="11" rx="2"/><rect x="4" y="4" width="11" height="11" rx="2"/></svg></span><span><b>Копировать</b><span>Текст сообщения</span></span></button>'+
     (m.out?'<button class="report-opt" onclick="closeSheets();deleteMsg(\''+id+'\')"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span><span><b>Удалить</b><span>Копия останется для жалоб</span></span></button>':'')+
     '<input type="hidden" id="msg-src">';

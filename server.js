@@ -289,6 +289,8 @@ function chatView(c, userId) {
     msgs: c.msgs.filter(m => m.time > ((c.clearedAt || {})[userId] || 0)).slice(-200).map(m => ({
       id: m.id, text: m.text, time: m.time,
       media: m.deleted ? null : (m.media || null),
+      reply: m.deleted ? null : (m.reply || null),
+      fwd: m.deleted ? null : (m.fwd || null),
       reactions: m.reactions || null,
       out: m.from === userId, deleted: !!m.deleted,
       from: c.type === 'channel' ? undefined : m.from
@@ -881,6 +883,19 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   if (media && !text) outText = media.kind === 'photo' ? '📷 Фото' : '🎤 Голосовое сообщение';
   const msg = { id: uid(), from: user.id, text: outText, time: now(), deleted: false };
   if (media) msg.media = media;
+
+  /* Ответ на сообщение — храним короткий снимок цитаты */
+  if (body.replyTo) {
+    const orig = chat.msgs.find(m => m.id === String(body.replyTo) && !m.deleted);
+    if (orig) {
+      const author = db.users[orig.from];
+      msg.reply = {
+        id: orig.id,
+        name: orig.from === user.id ? 'Вы' : ((author && author.name) || 'Собеседник'),
+        text: (orig.text || (orig.media ? (orig.media.kind === 'photo' ? '📷 Фото' : '🎤 Голосовое') : '')).slice(0, 70)
+      };
+    }
+  }
   chat.msgs.push(msg);
   if (chat.hiddenFor && chat.hiddenFor.length) chat.hiddenFor = []; /* удалённый у себя чат оживает */
   save();
@@ -888,7 +903,7 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   if (chat.type === 'channel') {
     /* Пост уходит всем подписчикам */
     for (const m of chat.members) {
-      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, time: msg.time, out: false } });
+      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, time: msg.time, out: false } });
     }
   } else {
     const peerId = chat.members.find(m => m !== user.id);
@@ -906,10 +921,58 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
       if (q.length > 500) q.splice(0, q.length - 500);
       save();
     } else if (peerId) {
-      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, time: msg.time, out: false } });
+      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, time: msg.time, out: false } });
     }
   }
-  send(res, 200, { message: { id: msg.id, text: msg.text, media: msg.media || null, reactions: null, time: msg.time, out: true } });
+  send(res, 200, { message: { id: msg.id, text: msg.text, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, reactions: null, time: msg.time, out: true } });
+});
+
+route('POST', '/api/messages/forward', async (req, res, body, user) => {
+  const src = db.chats[String(body.fromChatId || '')];
+  const dst = db.chats[String(body.toChatId || '')];
+  if (!src || !src.members.includes(user.id)) return send(res, 404, { error: 'Исходный чат не найден' });
+  if (!dst || !dst.members.includes(user.id)) return send(res, 404, { error: 'Чат для пересылки не найден' });
+  if (dst.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
+  if (dst.type === 'channel' && dst.owner !== user.id) return send(res, 403, { error: 'В канале пишет только владелец' });
+
+  const orig = src.msgs.find(m => m.id === String(body.messageId || '') && !m.deleted);
+  if (!orig) return send(res, 404, { error: 'Сообщение не найдено' });
+
+  if (dst.type !== 'channel') {
+    const pid = dst.members.find(m => m !== user.id);
+    const p = pid && db.users[pid];
+    if (p && (p.blocked || {})[user.id]) return send(res, 403, { error: 'Пользователь ограничил переписку' });
+    if (p && (user.blocked || {})[p.id]) return send(res, 403, { error: 'Вы заблокировали этого пользователя' });
+  }
+
+  const author = db.users[orig.from];
+  const msg = {
+    id: uid(), from: user.id,
+    text: orig.text || '', time: now(), deleted: false,
+    fwd: { name: (author && author.name) || 'Newchat' }
+  };
+  if (orig.media) msg.media = orig.media;
+  dst.msgs.push(msg);
+  if (dst.hiddenFor && dst.hiddenFor.length) dst.hiddenFor = [];
+  save();
+
+  const payload = { id: msg.id, text: msg.text, media: msg.media || null, reply: null, fwd: msg.fwd, time: msg.time, out: false };
+  if (dst.type === 'channel') {
+    for (const m of dst.members) if (m !== user.id) push(m, { type: 'message', chatId: dst.id, message: payload });
+  } else {
+    const pid = dst.members.find(m => m !== user.id);
+    const p = pid && db.users[pid];
+    if (p && p.isBot) {
+      db.botUpdates[p.id] = db.botUpdates[p.id] || [];
+      const q = db.botUpdates[p.id];
+      q.push({ update_id: (q.length ? q[q.length - 1].update_id : 0) + 1, chatId: dst.id, from: publicUser(user), text: msg.text, time: msg.time });
+      if (q.length > 500) q.splice(0, q.length - 500);
+      save();
+    } else if (pid) {
+      push(pid, { type: 'message', chatId: dst.id, message: payload });
+    }
+  }
+  send(res, 200, { message: Object.assign({}, payload, { out: true }) });
 });
 
 route('POST', '/api/messages/react', async (req, res, body, user) => {
