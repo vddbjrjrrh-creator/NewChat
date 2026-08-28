@@ -109,12 +109,53 @@ html.dark .report-opt,html.dark .set-row.glass-card,html.dark .pitem.glass-card{
 
 /* ===== Дыхание интерфейса ===== */
 .hdr h1{background:linear-gradient(105deg,var(--ink) 30%,var(--accent) 90%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.5px}
-@keyframes screenIn{from{opacity:0;transform:translateY(10px) scale(.995)}to{opacity:1;transform:none}}
-.screen.active{animation:screenIn .26s cubic-bezier(.3,.8,.4,1)}
-.btn{transition:transform .16s,box-shadow .2s}
-.btn:active{transform:scale(.965)}
-.chat-item{transition:background .15s}
-.chat-item:active{background:var(--accent-soft)}
+
+/* Экраны въезжают мягко, как нативные */
+@keyframes screenIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+.screen.active{animation:screenIn .32s cubic-bezier(.22,1,.36,1);will-change:transform,opacity}
+
+/* Единый отклик на касание — всё живое под пальцем */
+.btn,.pill-btn,.icon-btn,.report-opt,.cur-btn,.tab,.story,.call-btn,.fab{
+  transition:transform .16s cubic-bezier(.34,1.56,.64,1),box-shadow .22s,background .2s,opacity .2s;
+}
+.btn:active,.pill-btn:active,.report-opt:active,.cur-btn:active,.call-btn:active{transform:scale(.955)}
+.icon-btn:active,.tab:active,.story:active{transform:scale(.9)}
+.chat-item{transition:background .18s,transform .16s}
+.chat-item:active{background:var(--accent-soft);transform:scale(.985)}
+
+/* Пузырь нового сообщения выпрыгивает */
+@keyframes msgIn{from{opacity:0;transform:translateY(10px) scale(.94)}to{opacity:1;transform:none}}
+.msgs .msg:last-child{animation:msgIn .24s cubic-bezier(.22,1,.36,1)}
+
+/* Шит выезжает с пружинкой, вейл проявляется */
+.sheet{transition:transform .38s cubic-bezier(.22,1.1,.3,1)!important;will-change:transform}
+.sheet-veil{transition:opacity .28s;opacity:0}
+.sheet-veil.show{opacity:1}
+
+/* Тост всплывает мягко */
+.toast{transition:transform .32s cubic-bezier(.22,1.2,.36,1),opacity .28s!important}
+
+/* Кольцо непросмотренной сторис медленно вращается */
+@keyframes ringspin{to{transform:rotate(360deg)}}
+.story .ring{position:relative;overflow:hidden}
+.story .ring::before{content:'';position:absolute;inset:-40%;border-radius:50%;
+  background:conic-gradient(#6C5CE7,#4FC7D8,#C46CE7,#8B7CFF,#6C5CE7);
+  animation:ringspin 5s linear infinite}
+.story .ring.seen::before{display:none}
+.story .ring>div{position:relative;z-index:1}
+
+/* Переключение темы перетекает, а не мигает */
+body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
+  transition:background .35s,color .3s,border-color .35s,box-shadow .35s;
+}
+.scroll{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.01s!important;transition-duration:.01s!important}}
+
+/* Галочки и непрочитанные */
+.badge{background:linear-gradient(135deg,#9788EA,var(--accent));color:#fff;border-radius:11px;min-width:20px;height:20px;
+  font-size:.68rem;font-weight:800;display:inline-flex;align-items:center;justify-content:center;padding:0 6px;margin-top:5px;
+  box-shadow:0 3px 8px rgba(108,92,231,.4)}
+.tick{font-size:.72rem;letter-spacing:-2px;margin-right:3px;opacity:.8}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{
@@ -1534,6 +1575,49 @@ function startTgPoll(){
   tgPoll=setInterval(checkTg,2000);
   checkTg();
 }
+/* «Печатает…» и прочтения */
+const typingUntil={};
+let typingTimers={},lastTypingSent=0,lastReadSent={};
+function sendTyping(){
+  if(!currentChat||!ws||ws.readyState!==1)return;
+  const c=S.chats.find(x=>x.id===currentChat);
+  if(!c||c.type!=='dm'||(c.peer||{}).bot)return;
+  if(Date.now()-lastTypingSent<2500)return;
+  lastTypingSent=Date.now();
+  try{ws.send(JSON.stringify({type:'typing',chatId:currentChat}))}catch(e){}
+}
+function gotTyping(chatId){
+  typingUntil[chatId]=Date.now()+3200;
+  clearTimeout(typingTimers[chatId]);
+  typingTimers[chatId]=setTimeout(()=>{
+    delete typingUntil[chatId];
+    refreshTypingUI(chatId);
+  },3300);
+  refreshTypingUI(chatId);
+}
+function refreshTypingUI(chatId){
+  const active=document.querySelector('.screen.active');
+  if(active&&active.id==='s-chats')renderChats();
+  if(currentChat===chatId&&active&&active.id==='s-chat'){
+    const c=S.chats.find(x=>x.id===chatId);
+    if(!c)return;
+    const sub=document.getElementById('chat-sub');
+    if(typingUntil[chatId]&&typingUntil[chatId]>Date.now()){
+      sub.innerHTML='<i style="color:var(--accent)">печатает…</i>';
+    }else{
+      sub.textContent=c.service?'официальный аккаунт':fmtSeen(c.peer||{});
+    }
+  }
+}
+function markRead(chatId){
+  const c=S.chats.find(x=>x.id===chatId);
+  if(!c||c.service)return;
+  if(!c.unread&&(lastReadSent[chatId]||0)>Date.now()-3000)return;
+  lastReadSent[chatId]=Date.now();
+  c.unread=0;
+  api('/api/chats/read',{chatId}).catch(()=>{});
+}
+
 let tgBusy=false;
 async function checkTg(){
   if(!tgSession||tgBusy||token)return;
@@ -1639,7 +1723,13 @@ function connectWS(){
       const chat=S.chats.find(c=>c.id===d.chatId);
       if(chat){
         chat.msgs.push(d.message);
-        if(currentChat===d.chatId)renderMsgs(chat);
+        if(currentChat===d.chatId){
+          renderMsgs(chat);
+          if(!document.hidden)markRead(d.chatId); /* читаю прямо сейчас */
+        }else{
+          chat.unread=(chat.unread||0)+1;
+        }
+        delete typingUntil[d.chatId]; /* напечатал — прислал */
       }else{
         await refresh();
       }
@@ -1655,6 +1745,11 @@ function connectWS(){
       const chat=S.chats.find(c=>c.id===d.chatId);
       const m=chat&&chat.msgs.find(x=>x.id===d.messageId);
       if(m){m.deleted=true;if(currentChat===d.chatId)renderMsgs(chat)}
+    }
+    if(d.type==='typing'){gotTyping(d.chatId)}
+    if(d.type==='read'){
+      const c=S.chats.find(x=>x.id===d.chatId);
+      if(c){c.peerReadAt=d.at;if(currentChat===d.chatId)renderMsgs(c)}
     }
     if(d.type==='rtc'){try{await onRtc(d)}catch(e){}}
     if(d.type==='chats'||d.type==='state'){await refresh()}
@@ -1697,10 +1792,12 @@ function renderChats(){
       .replace('<div class="ava"','<div class="ava" data-dot="'+(peer.online&&!c.service&&c.type!=='channel'?'1':'')+'"');
     const mut=c.muted?' <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="opacity:.45;vertical-align:-2px"><path d="M9 6l5-3v18l-5-3H5V6h4z"/><path d="M2 2l20 20"/></svg>':'';
     const prev=last?(last.deleted?'Сообщение удалено':(last.media?(last.media.kind==='photo'?'📷 Фото':'🎤 Голосовое')+(last.text?' · '+esc(last.text).slice(0,40):''):esc(last.text).slice(0,60))):'';
+    const typing=typingUntil[c.id]&&typingUntil[c.id]>Date.now();
+    const badge=c.unread?'<span class="badge">'+(c.unread>99?'99+':c.unread)+'</span>':'';
     return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+av+
       '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+kind+mut+'</div>'+
-      '<div class="prev">'+prev+'</div></div>'+
-      '<div class="end"><span class="time">'+(last?fmtTime(last.time):'')+'</span></div></div>';
+      '<div class="prev">'+(typing?'<i style="color:var(--accent)">печатает…</i>':prev)+'</div></div>'+
+      '<div class="end"><span class="time">'+(last?fmtTime(last.time):'')+'</span>'+badge+'</div></div>';
   }).join('');
 }
 async function createChat(){
@@ -1745,6 +1842,7 @@ function openChat(id){
     comp.parentNode.insertBefore(n,comp);
   }
   renderMsgs(c);
+  markRead(id);
 }
 function openPeer(){
   const c=S.chats.find(x=>x.id===currentChat);
@@ -1874,8 +1972,9 @@ function renderMsgs(c){
       reacts='<div class="reacts">'+Object.entries(m.reactions).map(([e,ids])=>
         '<span class="react-chip" onclick="event.stopPropagation();reactMsg(\''+m.id+'\',\''+e+'\')">'+e+' '+ids.length+'</span>').join('')+'</div>';
     }
+    const tick=m.out&&!m.deleted?'<span class="tick">'+(c.peerReadAt&&m.time<=c.peerReadAt?'✓✓':'✓')+'</span>':'';
     return '<div class="msg '+(m.out?'out':'in')+'"'+del+' data-mid="'+m.id+'" style="cursor:pointer">'+body+reacts+
-      '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+fmtTime(m.time)+'</span></div>';
+      '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+tick+fmtTime(m.time)+'</span></div>';
   }).join('');
   box.scrollTop=box.scrollHeight;
 }
@@ -2329,6 +2428,7 @@ function openSearch(){
   const inp=document.getElementById('search-input');
   inp.value='';inp.focus();
 }
+document.getElementById('composer-input').addEventListener('input',sendTyping);
 document.getElementById('search-input').addEventListener('input',()=>{
   clearTimeout(searchTimer);
   searchTimer=setTimeout(doSearch,300);

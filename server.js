@@ -275,9 +275,17 @@ function chatView(c, userId) {
     peer = publicUser(db.users[otherId]);
   }
   const me = db.users[userId] || {};
+  const myReadAt = (me.reads || {})[c.id] || 0;
+  let peerReadAt = 0;
+  if (type === 'dm' && peer && peer.id) {
+    const other = db.users[peer.id];
+    peerReadAt = ((other || {}).reads || {})[c.id] || 0;
+  }
   return {
     id: c.id,
     type,
+    peerReadAt,
+    unread: c.msgs.filter(m => m.from !== userId && !m.deleted && m.time > myReadAt && m.time > ((c.clearedAt || {})[userId] || 0)).length,
     muted: !!(me.muted || {})[c.id],
     blocked: type === 'dm' && peer && peer.id ? !!(me.blocked || {})[peer.id] : false,
     service: !!c.service,
@@ -1367,6 +1375,20 @@ route('POST', '/api/channels/delete', async (req, res, body, user) => {
   send(res, 200, { chats: userChats(user.id) });
 });
 
+route('POST', '/api/chats/read', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  user.reads = user.reads || {};
+  user.reads[chat.id] = now();
+  save();
+  /* Собеседник увидит двойные галочки сразу */
+  if (chat.type !== 'channel' && !chat.service) {
+    const pid = chat.members.find(m => m !== user.id);
+    if (pid) push(pid, { type: 'read', chatId: chat.id, at: user.reads[chat.id] });
+  }
+  send(res, 200, { ok: true });
+});
+
 route('POST', '/api/chats/mute', async (req, res, body, user) => {
   const chat = db.chats[String(body.chatId || '')];
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
@@ -1785,6 +1807,18 @@ wss.on('connection', (ws, req) => {
   ws.on('message', raw => {
     let d;
     try { d = JSON.parse(String(raw).slice(0, 200000)); } catch (e) { return; }
+
+    if (d.type === 'typing') {
+      const chat = db.chats[String(d.chatId || '')];
+      if (!chat || chat.service || chat.type === 'channel' || !chat.members.includes(user.id)) return;
+      const peerId = chat.members.find(m => m !== user.id);
+      const peer = peerId && db.users[peerId];
+      if (!peer || peer.isBot) return;
+      if ((peer.blocked || {})[user.id] || (user.blocked || {})[peerId]) return;
+      push(peerId, { type: 'typing', chatId: chat.id });
+      return;
+    }
+
     if (d.type !== 'rtc') return;
 
     const chat = db.chats[String(d.chatId || '')];
