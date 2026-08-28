@@ -35,17 +35,70 @@
   font-size:15px;
 }
 html.dark{
-  --bg:#0F1017;
-  --glass:rgba(30,32,46,.62);
-  --glass-2:rgba(36,38,54,.85);
-  --glass-line:rgba(255,255,255,.07);
-  --edge:rgba(255,255,255,.08);
-  --ink:#EDEEF5;
-  --ink-2:#8B8EA0;
-  --accent-soft:rgba(133,118,255,.16);
+  --bg:#0B0D1E;
+  --glass:rgba(38,41,74,.5);
+  --glass-2:rgba(44,47,84,.72);
+  --glass-line:rgba(151,136,255,.16);
+  --edge:rgba(151,136,255,.14);
+  --ink:#EFF0FA;
+  --ink-2:#9195B4;
+  --accent:#8B7CFF;
+  --accent-soft:rgba(139,124,255,.18);
 }
-html.dark .tgl{background:#3A3D52}
+html.dark .tgl{background:#33365C}
 html.dark .tgl.on{background:var(--accent)}
+
+/* ===== Живой фон: стеклянные капли, которые переливаются и плывут ===== */
+.lava{position:fixed;inset:-12%;z-index:0;pointer-events:none;overflow:hidden;filter:blur(46px) saturate(1.35)}
+.lava i{position:absolute;display:block;border-radius:50%;opacity:.55;will-change:transform;animation:drift 26s ease-in-out infinite alternate}
+.lava .l1{width:62vw;height:62vw;left:-16vw;top:-8vh;background:radial-gradient(circle at 32% 30%,#B39DFF,#6C5CE7 62%,transparent 74%)}
+.lava .l2{width:52vw;height:52vw;right:-14vw;top:16vh;background:radial-gradient(circle at 60% 40%,#8FD0FF,#4D9FEF 60%,transparent 75%);animation-duration:31s;animation-delay:-9s}
+.lava .l3{width:46vw;height:46vw;left:6vw;bottom:-6vh;background:radial-gradient(circle at 40% 55%,#F1B7FF,#B06CE7 58%,transparent 76%);animation-duration:23s;animation-delay:-15s}
+.lava .l4{width:34vw;height:34vw;right:8vw;bottom:14vh;background:radial-gradient(circle at 50% 50%,#9CE8E4,#4FC7D8 55%,transparent 78%);animation-duration:35s;animation-delay:-4s;opacity:.4}
+.lava .l5{width:24vw;height:24vw;left:38vw;top:30vh;background:radial-gradient(circle at 45% 40%,#CFC5FF,#8B7CFF 58%,transparent 80%);animation-duration:19s;animation-delay:-11s;opacity:.42}
+@keyframes drift{
+  0%{transform:translate3d(0,0,0) scale(1) rotate(0deg)}
+  33%{transform:translate3d(9vw,-7vh,0) scale(1.14) rotate(14deg)}
+  66%{transform:translate3d(-7vw,9vh,0) scale(.92) rotate(-10deg)}
+  100%{transform:translate3d(5vw,4vh,0) scale(1.08) rotate(6deg)}
+}
+html.dark .lava{filter:blur(52px) saturate(1.25);opacity:.9}
+html.dark .lava i{opacity:.34}
+html.dark .lava .l1{background:radial-gradient(circle at 32% 30%,#6C5CE7,#2E2470 62%,transparent 76%)}
+html.dark .lava .l2{background:radial-gradient(circle at 60% 40%,#3E7DD8,#1E3B78 60%,transparent 78%)}
+html.dark .lava .l3{background:radial-gradient(circle at 40% 55%,#8E4CC7,#3D1E62 58%,transparent 78%)}
+@media (prefers-reduced-motion: reduce){.lava i{animation:none}}
+
+/* ===== Тёмная тема: стекло глубокого синего, а не серость ===== */
+html.dark .glass-card{
+  background:linear-gradient(135deg,rgba(52,55,96,.6),rgba(30,32,60,.42));
+  box-shadow:0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(178,166,255,.14);
+  border-color:var(--glass-line);
+}
+html.dark .tabbar{
+  background:rgba(24,26,50,.62);
+  box-shadow:0 12px 34px rgba(0,0,0,.45), inset 0 1px 0 rgba(178,166,255,.12);
+  border-color:var(--glass-line);
+}
+html.dark .sheet{
+  background:rgba(26,28,54,.88);
+  border:1px solid rgba(151,136,255,.2);
+  box-shadow:inset 0 1px 0 rgba(178,166,255,.14), 0 -14px 60px rgba(0,0,0,.6);
+}
+html.dark .msg.in{background:rgba(46,49,88,.8);border-color:rgba(151,136,255,.14);box-shadow:0 3px 10px rgba(0,0,0,.3)}
+html.dark .composer input,html.dark .field{background:rgba(40,43,80,.6);border-color:rgba(151,136,255,.16);color:var(--ink)}
+html.dark .search-pill{background:rgba(40,43,80,.55);border-color:rgba(151,136,255,.16)}
+html.dark .btn.ghost{background:rgba(46,49,88,.6);box-shadow:inset 0 1px 0 rgba(178,166,255,.1)}
+html.dark .icon-btn{color:var(--ink)}
+html.dark .report-opt,html.dark .set-row.glass-card,html.dark .pitem.glass-card{color:var(--ink)}
+
+/* ===== Дыхание интерфейса ===== */
+@keyframes screenIn{from{opacity:0;transform:translateY(10px) scale(.995)}to{opacity:1;transform:none}}
+.screen.active{animation:screenIn .26s cubic-bezier(.3,.8,.4,1)}
+.btn{transition:transform .16s,box-shadow .2s}
+.btn:active{transform:scale(.965)}
+.chat-item{transition:background .15s}
+.chat-item:active{background:var(--accent-soft)}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{
@@ -57,7 +110,7 @@ body{
 .mono{font-family:'JetBrains Mono',monospace}
 
 .app{
-  height:100%;max-width:520px;margin:0 auto;position:relative;
+  height:100%;max-width:520px;margin:0 auto;position:relative;z-index:1;
   display:flex;flex-direction:column;overflow:hidden;
   background:var(--bg);
 }
@@ -538,6 +591,7 @@ body{
 </style>
 </head>
 <body>
+<div class="lava" aria-hidden="true"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><i class="l5"></i></div>
 <div class="app" id="app">
 
   <!-- ЗАГРУЗКА: сервер на бесплатном тарифе может просыпаться до минуты -->
@@ -2611,7 +2665,12 @@ function soundOn(){
   try{const v=localStorage.getItem('newchat_sound');return v===null?true:v==='1'}catch(e){return true}
 }
 function darkOn(){try{return localStorage.getItem('newchat_dark')==='1'}catch(e){return false}}
-function applyDark(){document.documentElement.classList.toggle('dark',darkOn())}
+function applyDark(){
+  const on=darkOn();
+  document.documentElement.classList.toggle('dark',on);
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta)meta.content=on?'#0B0D1E':'#6C5CE7';
+}
 function toggleDark(){
   try{localStorage.setItem('newchat_dark',darkOn()?'0':'1')}catch(e){}
   applyDark();renderSettings();
