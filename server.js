@@ -96,6 +96,7 @@ async function load() {
       const r = await pgPool.query('SELECT data FROM newchat_db WHERE id = 1');
       if (r.rows.length && r.rows[0].data) {
         db = Object.assign(db, r.rows[0].data);
+        ensureDbShape();
         console.log('База загружена из Postgres: ' + Object.keys(db.users).length + ' аккаунтов');
       } else {
         console.log('Postgres подключён, база пустая — первый запуск');
@@ -112,11 +113,26 @@ async function load() {
   try {
     if (fs.existsSync(DATA_FILE)) {
       db = Object.assign(db, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+      ensureDbShape();
       console.log('База загружена из файла');
     }
   } catch (e) {
     console.error('Не удалось прочитать базу:', e.message);
   }
+}
+
+function ensureDbShape() {
+  db.users = db.users || {};
+  db.usernames = db.usernames || {};
+  db.tokens = db.tokens || {};
+  db.chats = db.chats || {};
+  db.reports = db.reports || [];
+  db.history = db.history || {};
+  db.tgSessions = db.tgSessions || {};
+  db.deals = db.deals || {};
+  db.stories = db.stories || [];
+  db.botTokens = db.botTokens || {};
+  db.botUpdates = db.botUpdates || {};
 }
 
 let saveTimer = null;
@@ -1625,6 +1641,29 @@ wss.on('connection', (ws, req) => {
 
   if (!sockets.has(user.id)) sockets.set(user.id, new Set());
   sockets.get(user.id).add(ws);
+
+  /* Сигналинг звонков: клиенты обмениваются WebRTC-пакетами через нас.
+     Сами звонки идут напрямую между телефонами, сервер видит только «конверты». */
+  ws.on('message', raw => {
+    let d;
+    try { d = JSON.parse(String(raw).slice(0, 200000)); } catch (e) { return; }
+    if (d.type !== 'rtc') return;
+
+    const chat = db.chats[String(d.chatId || '')];
+    if (!chat || chat.service || chat.type === 'channel' || !chat.members.includes(user.id)) return;
+
+    const peerId = chat.members.find(m => m !== user.id);
+    const peer = peerId && db.users[peerId];
+    if (!peer || peer.isBot) return;
+    if ((peer.blocked || {})[user.id] || (user.blocked || {})[peerId]) return;
+
+    push(peerId, {
+      type: 'rtc',
+      chatId: chat.id,
+      from: publicUser(user),
+      payload: d.payload || {}
+    });
+  });
 
   ws.on('close', () => {
     const set = sockets.get(user.id);
