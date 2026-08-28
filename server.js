@@ -69,6 +69,7 @@ let db = {
   codes: {},      // phone -> { code, expires }
   tgSessions: {}, // session -> { created, chatId, status, token, needsSetup }
   deals: {},      // dealId -> сделка на бирже
+  stories: [],    // истории на 24 часа
   botTokens: {},  // token -> botId
   botUpdates: {}  // botId -> [входящие сообщения для бота]
 };
@@ -228,9 +229,11 @@ function userByToken(token) {
   return id ? db.users[id] : null;
 }
 function isPremium(user) {
+  if (user && user.dev) return true; /* у разработчиков всегда премиум */
   return !!(user.premiumUntil && user.premiumUntil > now());
 }
 function slotLimit(user) {
+  if (user && user.dev) return 999;
   return isPremium(user) ? PREMIUM.slots : PREMIUM.freeSlots;
 }
 function chatIdFor(a, b) {
@@ -265,6 +268,8 @@ function chatView(c, userId) {
     peer,
     msgs: c.msgs.slice(-200).map(m => ({
       id: m.id, text: m.text, time: m.time,
+      media: m.deleted ? null : (m.media || null),
+      reactions: m.reactions || null,
       out: m.from === userId, deleted: !!m.deleted,
       from: c.type === 'channel' ? undefined : m.from
     }))
@@ -345,6 +350,7 @@ function fullState(user) {
     market: marketList(user.id),
     deals: myDeals(user.id),
     bots: myBots(user.id),
+    stories: storiesFeed(user),
     history: db.history[user.id] || [],
     reports: db.reports.filter(r => r.from === user.id).length
   };
@@ -565,6 +571,11 @@ function finishDeal(deal, how) {
 
 /* Часовой сделок: отменяет неоплаченные и завершает подтверждённые времени */
 setInterval(() => {
+  const before = db.stories ? db.stories.length : 0;
+  if (db.stories) {
+    db.stories = db.stories.filter(st => now() - st.time < 86400e3);
+    if (db.stories.length !== before) save();
+  }
   for (const d of Object.values(db.deals)) {
     if (d.status === 'pay' && now() - d.createdAt > DEAL.payHours * 3600e3) {
       finishDeal(d, 'cancelled');
@@ -606,7 +617,7 @@ function readBody(req) {
     let data = '';
     req.on('data', c => {
       data += c;
-      if (data.length > 1e6) req.destroy();
+      if (data.length > 6e6) req.destroy();
     });
     req.on('end', () => {
       try { resolve(data ? JSON.parse(data) : {}); }
@@ -796,12 +807,28 @@ route('POST', '/api/chats/create', async (req, res, body, user) => {
   send(res, 200, { chatId: id, chats: userChats(user.id) });
 });
 
+function validMedia(media) {
+  if (!media || typeof media !== 'object') return null;
+  const data = String(media.data || '');
+  if (media.kind === 'photo') {
+    if (!/^data:image\/(jpeg|png|webp);base64,/.test(data) || data.length > 700000) return null;
+    return { kind: 'photo', data };
+  }
+  if (media.kind === 'voice') {
+    if (!/^data:audio\/(webm|ogg|mp4|mpeg|wav)(;codecs=[a-z0-9]+)?;base64,/.test(data) || data.length > 1500000) return null;
+    return { kind: 'voice', data, dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1))) };
+  }
+  return null;
+}
+
 route('POST', '/api/messages/send', async (req, res, body, user) => {
   const chat = db.chats[body.chatId];
   const text = String(body.text || '').trim().slice(0, 4000);
+  const media = validMedia(body.media);
 
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  if (!text) return send(res, 400, { error: 'Пустое сообщение' });
+  if (!text && !media) return send(res, 400, { error: 'Пустое сообщение' });
+  if (body.media && !media) return send(res, 400, { error: 'Файл не подходит: фото до ~500 КБ, голос до 5 минут' });
   if (chat.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
   if (chat.type === 'channel' && chat.owner !== user.id) {
     return send(res, 403, { error: 'В канале пишет только владелец' });
@@ -814,13 +841,14 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   }
 
   const msg = { id: uid(), from: user.id, text, time: now(), deleted: false };
+  if (media) msg.media = media;
   chat.msgs.push(msg);
   save();
 
   if (chat.type === 'channel') {
     /* Пост уходит всем подписчикам */
     for (const m of chat.members) {
-      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } });
+      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text, media: msg.media || null, time: msg.time, out: false } });
     }
   } else {
     const peerId = chat.members.find(m => m !== user.id);
@@ -838,10 +866,40 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
       if (q.length > 500) q.splice(0, q.length - 500);
       save();
     } else if (peerId) {
-      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } });
+      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, media: msg.media || null, time: msg.time, out: false } });
     }
   }
-  send(res, 200, { message: { id: msg.id, text, time: msg.time, out: true } });
+  send(res, 200, { message: { id: msg.id, text, media: msg.media || null, reactions: null, time: msg.time, out: true } });
+});
+
+route('POST', '/api/messages/react', async (req, res, body, user) => {
+  const chat = db.chats[body.chatId];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  const msg = chat.msgs.find(m => m.id === String(body.messageId || ''));
+  if (!msg || msg.deleted) return send(res, 404, { error: 'Сообщение не найдено' });
+
+  const emoji = String(body.emoji || '').slice(0, 4);
+  const ALLOWED = ['❤️', '👍', '🔥', '😂', '😮', '💩'];
+  if (!ALLOWED.includes(emoji)) return send(res, 400, { error: 'Такой реакции нет' });
+
+  msg.reactions = msg.reactions || {};
+  const list = msg.reactions[emoji] || [];
+  /* Одна реакция от человека: повторный тап снимает, другая — заменяет */
+  for (const e of Object.keys(msg.reactions)) {
+    msg.reactions[e] = msg.reactions[e].filter(id => id !== user.id);
+    if (!msg.reactions[e].length) delete msg.reactions[e];
+  }
+  if (!list.includes(user.id)) {
+    msg.reactions[emoji] = msg.reactions[emoji] || [];
+    msg.reactions[emoji].push(user.id);
+  }
+  if (!Object.keys(msg.reactions).length) msg.reactions = null;
+  save();
+
+  for (const m of chat.members) {
+    if (m !== user.id) push(m, { type: 'react', chatId: chat.id, messageId: msg.id, reactions: msg.reactions });
+  }
+  send(res, 200, { reactions: msg.reactions });
 });
 
 route('POST', '/api/messages/delete', async (req, res, body, user) => {
@@ -1034,6 +1092,75 @@ route('POST', '/api/admin/deals', async (req, res, body) => {
     return send(res, 200, { ok: true });
   }
   send(res, 400, { error: 'Неизвестное действие' });
+});
+
+/* ---------- Панель разработчика ---------- */
+/* Доступна только аккаунтам из DEV_USERNAMES (переменная на Render) */
+
+route('POST', '/api/dev/user', async (req, res, body, user) => {
+  if (!user.dev) return send(res, 403, { error: 'Только для разработчиков' });
+  const uname = normUsername(body.username);
+  const rec = db.usernames[uname];
+  const target = rec && db.users[rec.owner];
+  if (!target) return send(res, 404, { error: 'Пользователь не найден' });
+
+  const done = [];
+  if (body.verified === true) { target.verified = true; done.push('галочка выдана'); }
+  if (body.verified === false) { target.verified = false; done.push('галочка снята'); }
+  if (Number(body.premiumDays)) {
+    const d = Number(body.premiumDays);
+    const from = target.premiumUntil && target.premiumUntil > now() ? target.premiumUntil : now();
+    target.premiumUntil = from + d * 86400e3;
+    done.push('премиум +' + d + ' дн.');
+  }
+  if (typeof body.trust === 'number') {
+    target.trust = Math.max(0, Math.min(100, Math.round(body.trust)));
+    done.push('доверие ' + target.trust + '%');
+  }
+  save();
+  serviceMessage(target.id, 'Обновление аккаунта от команды Newchat: ' + (done.join(', ') || 'без изменений') + '.');
+  push(target.id, { type: 'state' });
+  send(res, 200, { done, target: publicUser(target) });
+});
+
+/* ---------- Сторисы (премиум) ---------- */
+
+route('POST', '/api/stories/post', async (req, res, body, user) => {
+  if (!isPremium(user)) return send(res, 403, { error: 'Сторисы — функция премиума. Пригласите ' + PREMIUM.invites + ' друзей!' });
+  const photo = String(body.photo || '');
+  if (!/^data:image\/(jpeg|png|webp);base64,/.test(photo) || photo.length > 700000) {
+    return send(res, 400, { error: 'Фото не подходит' });
+  }
+  const mine = db.stories.filter(st => st.user === user.id && now() - st.time < 86400e3);
+  if (mine.length >= 10) return send(res, 400, { error: 'Не больше 10 историй в сутки' });
+
+  db.stories.push({ id: uid(), user: user.id, photo, text: String(body.text || '').slice(0, 100), time: now() });
+  save();
+  send(res, 200, { stories: storiesFeed(user) });
+});
+
+function storiesFeed(user) {
+  const fresh = db.stories.filter(st => now() - st.time < 86400e3);
+  const byUser = {};
+  for (const st of fresh) {
+    const author = db.users[st.user];
+    if (!author) continue;
+    if (author.anon && author.id !== user.id) continue; /* анонимы не светятся */
+    if ((author.blocked || {})[user.id]) continue;
+    byUser[st.user] = byUser[st.user] || { user: publicUser(author), mine: st.user === user.id, items: [] };
+    byUser[st.user].items.push({ id: st.id, photo: st.photo, text: st.text, time: st.time });
+  }
+  return Object.values(byUser).sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0));
+}
+
+route('POST', '/api/stories/list', async (req, res, body, user) => {
+  send(res, 200, { stories: storiesFeed(user) });
+});
+
+route('POST', '/api/stories/delete', async (req, res, body, user) => {
+  db.stories = db.stories.filter(st => !(st.id === String(body.id || '') && st.user === user.id));
+  save();
+  send(res, 200, { stories: storiesFeed(user) });
 });
 
 /* ---------- Приватность, блокировки, звук ---------- */
