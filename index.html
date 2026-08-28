@@ -948,7 +948,8 @@ body{
           Мои боты<div class="spacer"></div><span class="val" id="p-bots">0 из 3</span>
         </div>
 
-        <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:4px 0 2px">Newchat · версия 5 · <span id="p-browser"></span></div>
+        <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:4px 0 2px" onclick="showErrs()">Newchat · версия 5 · <span id="p-browser"></span></div>
+        <div class="val" style="display:none;text-align:left;color:var(--danger);font-size:.68rem;padding:4px 10px;word-break:break-all" id="p-errs"></div>
         <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:0 0 4px" id="p-caps"></div>
         <div class="pitem glass-card" id="p-admin" style="display:none" onclick="openSheet('sheet-admin')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19 12a7 7 0 01-.1 1.2l2 1.6-2 3.4-2.4-1a7 7 0 01-2 1.2L14 21h-4l-.5-2.6a7 7 0 01-2-1.2l-2.4 1-2-3.4 2-1.6A7 7 0 015 12a7 7 0 01.1-1.2l-2-1.6 2-3.4 2.4 1a7 7 0 012-1.2L10 3h4l.5 2.6a7 7 0 012 1.2l2.4-1 2 3.4-2 1.6c.06.4.1.8.1 1.2z"/></svg>
@@ -1142,6 +1143,11 @@ const tokenStore={
   clear(){try{localStorage.removeItem('newchat_token')}catch(e){window.__tok=null}}
 };
 
+/* Копилка ошибок — тап по номеру версии в профиле покажет их */
+window.__errs=[];
+window.addEventListener('error',e=>{window.__errs.push((e.message||'ошибка')+' @ '+(e.filename||'').split('/').pop()+':'+e.lineno);if(window.__errs.length>8)window.__errs.shift()});
+window.addEventListener('unhandledrejection',e=>{window.__errs.push('promise: '+((e.reason&&e.reason.message)||e.reason||'?'));if(window.__errs.length>8)window.__errs.shift()});
+
 let token=tokenStore.get();
 /* Пришли по ссылке друга — запоминаем, чтобы засчитать приглашение */
 try{
@@ -1287,8 +1293,25 @@ async function finishSetup(){
   }catch(e){}
 }
 /* ============ ВХОД В ПРИЛОЖЕНИЕ ============ */
+let srvWarned=false;
+async function checkServerFresh(){
+  try{
+    const r=await fetch(API+'/api/config');
+    const c=await r.json();
+    if(!c.deal&&!srvWarned){
+      srvWarned=true;
+      /* Сервер отстал от приложения — главная причина «ничего не работает» */
+      const b=document.createElement('div');
+      b.style.cssText='position:fixed;top:calc(8px + env(safe-area-inset-top));left:8px;right:8px;z-index:500;background:#E4574C;color:#fff;border-radius:14px;padding:12px 14px;font-size:.82rem;box-shadow:0 8px 24px rgba(0,0,0,.3)';
+      b.innerHTML='<b>Сервер устарел!</b> Приложение — версия 5, а на Render старый server.js. Залейте свежие server/server.js и server/package.json в GitHub и дождитесь деплоя на Render. Пока сервер старый — фото, сторисы, реакции и звонки работать не будут.';
+      b.onclick=()=>b.remove();
+      document.body.appendChild(b);
+    }
+  }catch(e){}
+}
 function enterApp(){
   go('s-chats');
+  checkServerFresh();
   /* Один раз после первого входа просим разрешения — как обычный мессенджер */
   let asked=false;
   try{asked=localStorage.getItem('newchat_perms')==='1'}catch(e){}
@@ -2744,6 +2767,11 @@ function renderProfile(){
   renderDiag();
 }
 /* Какой браузер открыл приложение и что он умеет — видно прямо в профиле */
+function showErrs(){
+  const el=document.getElementById('p-errs');
+  el.style.display='block';
+  el.textContent=window.__errs.length?window.__errs.join('\n'):'Ошибок не поймано — значит, дело не в приложении.';
+}
 function renderDiag(){
   const ua=navigator.userAgent;
   let br='другой браузер';
