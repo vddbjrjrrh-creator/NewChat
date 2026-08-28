@@ -1384,6 +1384,7 @@ function show(id){
 }
 function go(id){
   show(id);
+  if(id==='s-market'&&S)refresh().catch(()=>{}); /* каталог всегда свежий */
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===id));
   if(id==='s-chats')renderChats();
   if(id==='s-wallet')renderWallet();
@@ -1706,6 +1707,7 @@ async function resendCode(){
 }
 function logout(silent){
   if(!silent&&!confirm('Выйти из аккаунта?'))return;
+  try{if(token&&!silent)api('/api/auth/logout',{}).catch(()=>{})}catch(e){} /* убить сессию на сервере */
   tokenStore.clear();token=null;S=null;
   if(ws){try{ws.close()}catch(e){}ws=null}
   show('s-auth');
@@ -1854,6 +1856,15 @@ function openPeer(){
   const avaBig='<div class="ava" style="'+avaStyle+'">'+(p.photo?'':esc((p.name||'?')[0].toUpperCase()))+'</div>';
   const check=p.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
   let sub=c.type==='channel'?(c.subs||1)+' подписчиков':(p.bot?'бот':fmtSeen(p));
+  let dossier='';
+  if(!p.bot&&!p.channel&&typeof p.reportsOn==='number'){
+    const repColor=p.reportsOn===0?'var(--trust)':(p.reportsOn<3?'var(--gold)':'var(--danger)');
+    dossier='<div style="display:flex;gap:8px;padding:10px 22px 6px">'+
+      '<div class="glass-card" style="flex:1;padding:9px 6px;text-align:center"><b style="font-size:1rem;color:'+repColor+'">'+p.reportsOn+'</b><div style="font-size:.62rem;color:var(--ink-2)">жалоб на него</div></div>'+
+      '<div class="glass-card" style="flex:1;padding:9px 6px;text-align:center"><b style="font-size:1rem">'+(p.ageDays||0)+'</b><div style="font-size:.62rem;color:var(--ink-2)">дн. аккаунту</div></div>'+
+      '<div class="glass-card" style="flex:1;padding:9px 6px;text-align:center"><b style="font-size:1rem">'+(p.dealsDone||0)+'</b><div style="font-size:.62rem;color:var(--ink-2)">сделок продал</div></div>'+
+      '</div>';
+  }
   let trustRow='';
   if(!p.bot&&!p.channel&&typeof p.trust==='number'){
     trustRow='<div style="padding:0 22px 4px"><div style="display:flex;justify-content:space-between;font-size:.76rem;color:var(--ink-2);margin-bottom:5px"><span>Батарейка доверия</span><b style="color:'+(p.trust>=70?'var(--trust)':(p.trust>=40?'var(--gold)':'var(--danger)'))+'">'+p.trust+'%</b></div>'+
@@ -1864,7 +1875,7 @@ function openPeer(){
     '<div style="margin-top:-43px;text-align:center">'+avaBig+'</div>'+
     '<div style="text-align:center;padding:8px 20px 2px"><b style="font-size:1.15rem">'+esc(p.name||'')+'</b>'+check+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
     '<div style="text-align:center;color:var(--ink-2);font-size:.82rem;padding-bottom:4px" onclick="copyText(\'@'+esc(p.username||'')+'\');toast(\'Юзернейм скопирован\')">@'+esc(p.username||'')+' · '+esc(sub)+'</div>'+
-    trustRow+
+    dossier+trustRow+
     '<div style="padding:12px 16px 18px;display:flex;flex-direction:column;gap:8px">'+
     (c.type==='dm'&&!p.bot?'<button class="btn ghost" style="margin:0" onclick="closeSheets();blockPeer()">'+(c.blocked?'Разблокировать':'Заблокировать')+'</button>':'')+
     (c.type==='dm'?'<button class="btn ghost" style="margin:0;color:var(--danger)" onclick="closeSheets();openSheet(\'sheet-report\')">Пожаловаться</button>':'')+
@@ -1888,10 +1899,21 @@ function openChatMenu(){
   b.innerHTML=
     '<button class="report-opt" onclick="muteChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M9 6l5-3v18l-5-3H5V6h4z"/>'+(c.muted?'':'<path d="M2 2l20 20"/>')+'</svg></span><span><b>'+(c.muted?'Включить звук':'Выключить звук')+'</b><span>Уведомления этого чата</span></span></button>'+
     '<button class="report-opt" onclick="blockPeer()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg></span><span><b>'+(c.blocked?'Разблокировать':'Заблокировать')+'</b><span>'+(c.blocked?'Снова разрешить переписку':'Собеседник не сможет вам писать')+'</span></span></button>'+
+    '<button class="report-opt" onclick="cycleTtl()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span><span><b>Автоудаление: '+(c.ttl===3600e3?'1 час':(c.ttl===86400e3?'24 часа':'выкл'))+'</b><span>Сообщения будут стираться сами</span></span></button>'+
     '<button class="report-opt" onclick="clearChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 6h16M6 6l1.5 14h9L18 6"/><path d="M10 11v5M14 11v5"/></svg></span><span><b>Очистить историю</b><span>Только у вас, собеседник всё видит</span></span></button>'+
     '<button class="report-opt" onclick="deleteChat()"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span><span><b>Удалить чат</b><span>Пропадёт у вас; копия для жалоб сохраняется</span></span></button>'+
     '<button class="report-opt" onclick="closeSheets();openSheet(\'sheet-report\')"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v4"/></svg></span><span><b>Пожаловаться</b><span>Докс или скам — уйдёт в полицию</span></span></button>';
   openSheet('sheet-chatmenu');
+}
+async function cycleTtl(){
+  const c=S.chats.find(x=>x.id===currentChat);
+  if(!c)return;
+  const next=c.ttl===0?1:(c.ttl===3600e3?24:0);
+  try{
+    const r=await api('/api/chats/ttl',{chatId:currentChat,hours:next});
+    S.chats=r.chats;closeSheets();
+    toast('Автоудаление: '+(next===0?'выключено':(next===1?'1 час':'24 часа')));
+  }catch(e){}
 }
 async function clearChat(){
   if(!confirm('Очистить историю у себя? У собеседника переписка останется.'))return;
@@ -3107,14 +3129,14 @@ async function deleteUname(u){
   if(!confirm('Удалить @'+u+'? Слот освободится, а юзернейм сможет занять кто угодно.'))return;
   try{
     const r=await api('/api/usernames/delete',{username:u});
-    S.usernames=r.usernames;renderMarket();renderProfile();
+    S.usernames=r.usernames;if(r.market)S.market=r.market;renderMarket();renderProfile();
     toast('@'+u+' удалён, слот свободен');
   }catch(e){}
 }
 async function unsell(u){
   try{
     const r=await api('/api/usernames/unsell',{username:u});
-    S.usernames=r.usernames;renderMarket();
+    S.usernames=r.usernames;if(r.market)S.market=r.market;renderMarket();
     toast('@'+u+' снят с продажи');
   }catch(e){}
 }
@@ -3122,7 +3144,7 @@ async function doSell(){
   const p=parseFloat(document.getElementById('sell-price').value)||0;
   try{
     const r=await api('/api/usernames/sell',{username:sellUname,price:p});
-    S.usernames=r.usernames;
+    S.usernames=r.usernames;if(r.market)S.market=r.market;
     document.getElementById('sell-price').value='';
     closeSheets();renderMarket();
     toast('@'+sellUname+' выставлен на продажу');

@@ -236,6 +236,9 @@ function publicUser(u) {
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
     bot: !!u.isBot, anon: !!u.anon,
     trust: u.isBot ? undefined : (u.trust || 0),
+    reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
+    ageDays: Math.max(0, Math.floor((now() - (u.createdAt || now())) / 86400e3)),
+    dealsDone: u.isBot ? 0 : Object.values(db.deals).filter(d => d.seller === u.id && d.status === 'done').length,
     online: u.anon ? undefined : (u.isBot ? true : isOnline(u.id)),
     lastSeen: u.anon ? 0 : (u.lastSeen || 0),
     verified: !!u.verified, dev: isDev(u)
@@ -287,6 +290,7 @@ function chatView(c, userId) {
     peerReadAt,
     unread: c.msgs.filter(m => m.from !== userId && !m.deleted && m.time > myReadAt && m.time > ((c.clearedAt || {})[userId] || 0)).length,
     muted: !!(me.muted || {})[c.id],
+    ttl: c.ttl || 0,
     blocked: type === 'dm' && peer && peer.id ? !!(me.blocked || {})[peer.id] : false,
     service: !!c.service,
     owner: c.owner || null,
@@ -613,6 +617,16 @@ function finishDeal(deal, how) {
 
 /* Часовой сделок: отменяет неоплаченные и завершает подтверждённые времени */
 setInterval(() => {
+  /* Автоудаление: помечаем старые сообщения в чатах с таймером */
+  let ttlChanged = false;
+  for (const c of Object.values(db.chats)) {
+    if (!c.ttl) continue;
+    for (const m of c.msgs) {
+      if (!m.deleted && now() - m.time > c.ttl) { m.deleted = true; ttlChanged = true; }
+    }
+  }
+  if (ttlChanged) save();
+
   const before = db.stories ? db.stories.length : 0;
   if (db.stories) {
     db.stories = db.stories.filter(st => now() - st.time < 86400e3);
@@ -741,6 +755,11 @@ route('POST', '/api/auth/verify', async (req, res, body) => {
 
   let user = Object.values(db.users).find(u => u.phone === phone);
   const token = crypto.randomBytes(24).toString('hex');
+  if (user) {
+    /* Старые сессии сверх пяти умирают — украденный давний токен бесполезен */
+    const mine = Object.entries(db.tokens).filter(([, id]) => id === user.id);
+    while (mine.length >= 5) delete db.tokens[mine.shift()[0]];
+  }
 
   if (!user) {
     const id = uid();
@@ -1316,6 +1335,13 @@ route('POST', '/api/stories/delete', async (req, res, body, user) => {
 
 /* ---------- Приватность, блокировки, звук ---------- */
 
+route('POST', '/api/auth/logout', async (req, res, body, user) => {
+  const t = (req.headers.authorization || '').replace('Bearer ', '');
+  if (db.tokens[t]) delete db.tokens[t];
+  save();
+  send(res, 200, { ok: true });
+});
+
 route('POST', '/api/profile/settings', async (req, res, body, user) => {
   if (typeof body.anon === 'boolean') user.anon = body.anon;
   save();
@@ -1373,6 +1399,22 @@ route('POST', '/api/channels/delete', async (req, res, body, user) => {
     }
   }
   send(res, 200, { chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/ttl', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (chat.service || chat.type === 'channel') return send(res, 400, { error: 'Только для личных чатов' });
+  const hours = [0, 1, 24].includes(Number(body.hours)) ? Number(body.hours) : 0;
+  chat.ttl = hours ? hours * 3600e3 : 0;
+  save();
+  const label = hours === 0 ? 'выключено' : (hours === 1 ? '1 час' : '24 часа');
+  const pid = chat.members.find(m => m !== user.id);
+  if (pid) {
+    serviceMessage(pid, `Собеседник изменил автоудаление сообщений в вашем чате: ${label}.`);
+    push(pid, { type: 'state' });
+  }
+  send(res, 200, { ttl: chat.ttl, chats: userChats(user.id) });
 });
 
 route('POST', '/api/chats/read', async (req, res, body, user) => {
@@ -1587,7 +1629,7 @@ route('POST', '/api/usernames/claim', async (req, res, body, user) => {
 
   db.usernames[username] = { owner: user.id, main: false, forSale: false, price: 0 };
   save();
-  send(res, 200, { usernames: myUsernames(user.id) });
+  send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
 route('POST', '/api/usernames/sell', async (req, res, body, user) => {
@@ -1610,7 +1652,7 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
   rec.forSale = true;
   rec.price = price;
   save();
-  send(res, 200, { usernames: myUsernames(user.id) });
+  send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
 route('POST', '/api/usernames/delete', async (req, res, body, user) => {
@@ -1628,7 +1670,7 @@ route('POST', '/api/usernames/delete', async (req, res, body, user) => {
   if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   delete db.usernames[username]; /* снова свободен для всех */
   save();
-  send(res, 200, { usernames: myUsernames(user.id) });
+  send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
 route('POST', '/api/usernames/unsell', async (req, res, body, user) => {
@@ -1639,7 +1681,7 @@ route('POST', '/api/usernames/unsell', async (req, res, body, user) => {
   rec.forSale = false;
   rec.price = 0;
   save();
-  send(res, 200, { usernames: myUsernames(user.id) });
+  send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
 /* ---------- Верификация ---------- */
