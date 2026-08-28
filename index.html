@@ -734,8 +734,8 @@ body{
     </div>
     <div class="msgs" id="chat-msgs"></div>
     <div class="composer">
-      <button class="icon-btn" style="flex:none" onclick="document.getElementById('msg-photo').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></button>
-      <input type="file" id="msg-photo" accept="image/*" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" onchange="sendPhoto(this)">
+      <label class="icon-btn" for="msg-photo" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></label>
+      <input type="file" id="msg-photo" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendPhoto(this)">
       <input placeholder="Сообщение" id="composer-input">
       <button class="icon-btn" style="flex:none" id="mic-btn" onclick="toggleRec()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
       <button class="send" onclick="sendMsg()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20"><path d="M4 12l16-7-4 7 4 7-16-7z"/></svg></button>
@@ -906,8 +906,8 @@ body{
     <div class="scroll">
       <div class="profile-cover" id="p-cover" onclick="openSheet('sheet-deco')" style="cursor:pointer"></div>
       <div class="profile-top">
-        <div class="ava" id="p-ava" onclick="document.getElementById('ava-file').click()" style="cursor:pointer;background-size:cover;background-position:center"><span id="p-initial"></span><span class="status-emoji" id="p-status"></span></div>
-        <input type="file" id="ava-file" accept="image/*" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" onchange="uploadAvatar(this)">
+        <label class="ava" id="p-ava" for="ava-file" style="cursor:pointer;background-size:cover;background-position:center"><span id="p-initial"></span><span class="status-emoji" id="p-status"></span></label>
+        <input type="file" id="ava-file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="uploadAvatar(this)">
         <div class="val" style="font-size:.72rem;color:var(--ink-2);margin-top:4px">нажмите на аватар, чтобы поставить фото</div>
         <h2><span id="p-name"></span> <span class="vcheck" id="p-vcheck" style="display:none;width:19px;height:19px"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span></h2>
         <div class="h mono" id="p-handle"></div>
@@ -1100,7 +1100,7 @@ body{
   <img id="sv-img" onclick="nextStory()">
   <div id="sv-text" style="color:#fff;text-align:center;padding:14px 20px calc(20px + env(safe-area-inset-bottom));font-size:.95rem"></div>
 </div>
-<input type="file" id="story-file" accept="image/*" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" onchange="postStory(this)">
+<input type="file" id="story-file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="postStory(this)">
 </div>
 
 <script>
@@ -1803,10 +1803,13 @@ function sendPhoto(input){
 }
 /* Голосовые: тап — запись, тап — отправка */
 let rec=null,recChunks=[],recStart=0;
+let wavRec=null; /* запасная запись для браузеров без MediaRecorder */
 async function toggleRec(){
   const btn=document.getElementById('mic-btn');
   if(rec){rec.stop();return}
-  if(!navigator.mediaDevices||!window.MediaRecorder){toast('Браузер не умеет записывать звук');return}
+  if(wavRec){wavRec.stop();return}
+  if(!navigator.mediaDevices){toast('Браузер не даёт доступ к микрофону — откройте в Chrome');return}
+  if(!window.MediaRecorder){startWavRec(btn);return}
   try{
     const stream=await navigator.mediaDevices.getUserMedia({audio:true});
     const mime=MediaRecorder.isTypeSupported('audio/webm')?'audio/webm':(MediaRecorder.isTypeSupported('audio/mp4')?'audio/mp4':'');
@@ -1821,7 +1824,7 @@ async function toggleRec(){
       if(dur<1){toast('Слишком коротко');return}
       const fr=new FileReader();
       fr.onload=async()=>{
-        if(fr.result.length>1500000){toast('Голосовое слишком длинное');return}
+        if(fr.result.length>3000000){toast('Голосовое слишком длинное');return}
         try{
           const r=await api('/api/messages/send',{chatId:currentChat,media:{kind:'voice',data:fr.result,dur}});
           const c=S.chats.find(x=>x.id===currentChat);
@@ -1834,6 +1837,57 @@ async function toggleRec(){
     btn.style.color='var(--danger)';
     toast('Запись… тапните ещё раз, чтобы отправить');
   }catch(e){toast('Нет доступа к микрофону')}
+}
+/* WAV-запись: работает даже там, где нет MediaRecorder */
+async function startWavRec(btn){
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:true})}
+  catch(e){toast('Нет доступа к микрофону — разрешите в настройках браузера');return}
+  wakeAudio();
+  const ctx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+  const src=ctx.createMediaStreamSource(stream);
+  const proc=ctx.createScriptProcessor(4096,1,1);
+  const chunks=[];const t0=Date.now();
+  src.connect(proc);proc.connect(ctx.destination);
+  proc.onaudioprocess=e=>{chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))};
+  btn.style.color='var(--danger)';
+  toast('Запись… тапните ещё раз, чтобы отправить');
+  const autoStop=setTimeout(()=>{if(wavRec)wavRec.stop()},60000);
+  wavRec={stop:async()=>{
+    clearTimeout(autoStop);
+    proc.disconnect();src.disconnect();
+    stream.getTracks().forEach(t=>t.stop());
+    btn.style.color='';wavRec=null;
+    const dur=Math.round((Date.now()-t0)/1000);
+    if(dur<1){toast('Слишком коротко');return}
+    /* Сшиваем и ужимаем до 11 кГц — голос слышно отлично, вес маленький */
+    const inRate=ctx.sampleRate,outRate=11025;
+    let n=0;chunks.forEach(c=>n+=c.length);
+    const all=new Float32Array(n);let off=0;
+    chunks.forEach(c=>{all.set(c,off);off+=c.length});
+    const k=inRate/outRate,outN=Math.floor(all.length/k);
+    const pcm=new Int16Array(outN);
+    for(let i=0;i<outN;i++){
+      const v=Math.max(-1,Math.min(1,all[Math.floor(i*k)]));
+      pcm[i]=v<0?v*0x8000:v*0x7FFF;
+    }
+    const buf=new ArrayBuffer(44+pcm.length*2);const dv=new DataView(buf);
+    const wstr=(o,str)=>{for(let i=0;i<str.length;i++)dv.setUint8(o+i,str.charCodeAt(i))};
+    wstr(0,'RIFF');dv.setUint32(4,36+pcm.length*2,true);wstr(8,'WAVE');wstr(12,'fmt ');
+    dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+    dv.setUint32(24,outRate,true);dv.setUint32(28,outRate*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);
+    wstr(36,'data');dv.setUint32(40,pcm.length*2,true);
+    new Int16Array(buf,44).set(pcm);
+    const fr=new FileReader();
+    fr.onload=async()=>{
+      try{
+        const r=await api('/api/messages/send',{chatId:currentChat,media:{kind:'voice',data:fr.result,dur}});
+        const c=S.chats.find(x=>x.id===currentChat);
+        c.msgs.push(r.message);renderMsgs(c);
+      }catch(e){}
+    };
+    fr.readAsDataURL(new Blob([buf],{type:'audio/wav'}));
+  }};
 }
 async function deleteMsg(id){
   if(!confirm('Удалить сообщение? Копия останется для жалоб.'))return;
@@ -2302,7 +2356,7 @@ function renderStories(){
   const mineBlock=st.find(x=>x.mine);
   let html='';
   if(S.user.premium){
-    html+='<div class="story" onclick="document.getElementById(\'story-file\').click()"><div class="ring" style="background:#D6D9E6"><div style="background:linear-gradient(135deg,#6C5CE7,#8E7CF0)">+</div></div><p>Добавить</p></div>';
+    html+='<label class="story" for="story-file" style="display:block;cursor:pointer"><div class="ring" style="background:#D6D9E6"><div style="background:linear-gradient(135deg,#6C5CE7,#8E7CF0)">+</div></div><p>Добавить</p></label>';
   }
   html+=st.map((g,i)=>{
     const u=g.user||{};
@@ -2432,14 +2486,28 @@ function toggleSound(){
   if(on)beep();
   toast(on?'Звук включён':'Звук выключен');
 }
+let audioCtx=null;
+function wakeAudio(){
+  try{
+    if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended')audioCtx.resume();
+  }catch(e){}
+}
+/* Первый тап по экрану «будит» звук — требование мобильных браузеров */
+document.addEventListener('pointerdown',wakeAudio,{once:false,passive:true});
 function beep(){
   try{
-    const ctx=new (window.AudioContext||window.webkitAudioContext)();
-    const o=ctx.createOscillator(),g=ctx.createGain();
-    o.connect(g);g.connect(ctx.destination);
-    o.frequency.value=880;g.gain.setValueAtTime(0.08,ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.18);
-    o.start();o.stop(ctx.currentTime+0.18);
+    wakeAudio();
+    if(!audioCtx)return;
+    const play=()=>{
+      const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+      o.connect(g);g.connect(audioCtx.destination);
+      o.frequency.value=880;g.gain.setValueAtTime(0.09,audioCtx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);
+      o.start();o.stop(audioCtx.currentTime+0.2);
+    };
+    if(audioCtx.state==='suspended')audioCtx.resume().then(play).catch(()=>{});
+    else play();
   }catch(e){}
 }
 function notifyMsg(chatId,text){
@@ -2448,12 +2516,35 @@ function notifyMsg(chatId,text){
   const hidden=document.hidden||!document.querySelector('#s-chat.active')||currentChat!==chatId;
   if(!hidden)return;
   if(soundOn())beep();
+  try{if(navigator.vibrate)navigator.vibrate([120,60,120])}catch(e){}
+  /* Системное уведомление — где поддерживается */
   if(notifOn()){
     try{
       const n=new Notification((c.peer||{}).name||'Newchat',{body:text.slice(0,80),tag:chatId});
       n.onclick=()=>{window.focus();openChat(chatId);n.close()};
     }catch(e){}
   }
+  /* Баннер внутри приложения — работает везде, включая Mi Browser */
+  if(!document.hidden)showBanner(c,text);
+}
+let bannerT=null;
+function showBanner(c,text){
+  let b=document.getElementById('msg-banner');
+  if(!b){
+    b=document.createElement('div');
+    b.id='msg-banner';
+    b.style.cssText='position:fixed;top:calc(10px + env(safe-area-inset-top));left:10px;right:10px;z-index:400;background:rgba(255,255,255,.97);border-radius:16px;padding:12px 14px;box-shadow:0 8px 28px rgba(31,32,64,.25);display:flex;gap:10px;align-items:center;transform:translateY(-130%);transition:transform .25s';
+    document.body.appendChild(b);
+  }
+  const p=c.peer||{};
+  const bg=p.photo?'url('+p.photo+') center/cover':(p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?')));
+  b.innerHTML='<div class="ava" style="width:38px;height:38px;font-size:.9rem;flex:none;background:'+bg+'">'+(p.photo?'':esc((p.name||'?')[0].toUpperCase()))+'</div>'+
+    '<div style="min-width:0"><b style="font-size:.88rem">'+esc(p.name||'')+'</b>'+
+    '<div style="font-size:.8rem;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(text.slice(0,60))+'</div></div>';
+  b.onclick=()=>{b.style.transform='translateY(-130%)';openChat(c.id)};
+  requestAnimationFrame(()=>{b.style.transform='translateY(0)'});
+  clearTimeout(bannerT);
+  bannerT=setTimeout(()=>{b.style.transform='translateY(-130%)'},3500);
 }
 
 /* ============ АВАТАР ============ */

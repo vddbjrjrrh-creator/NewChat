@@ -840,7 +840,7 @@ function validMedia(media) {
     return { kind: 'photo', data };
   }
   if (media.kind === 'voice') {
-    if (!/^data:audio\/(webm|ogg|mp4|mpeg|wav)(;codecs=[a-z0-9]+)?;base64,/.test(data) || data.length > 1500000) return null;
+    if (!/^data:audio\/(webm|ogg|mp4|mpeg|wav)(;codecs=[a-z0-9]+)?;base64,/.test(data) || data.length > 3000000) return null;
     return { kind: 'voice', data, dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1))) };
   }
   return null;
