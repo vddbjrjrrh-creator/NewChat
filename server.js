@@ -561,11 +561,22 @@ function finishDeal(deal, how) {
 
   if (how === 'done') {
     if (rec) {
+      const wasMain = rec.main;
       rec.owner = deal.buyer;
       rec.forSale = false;
       rec.frozen = null;
       rec.price = 0;
       rec.main = false;
+      if (wasMain && seller) {
+        /* Продан основной — запасной становится новым лицом продавца */
+        const spare = Object.entries(db.usernames).find(([un, v]) =>
+          v.owner === seller.id && !v.channel && !v.frozen);
+        if (spare) {
+          spare[1].main = true;
+          seller.username = spare[0];
+          serviceMessage(seller.id, `Ваш основной юзернейм теперь @${spare[0]}.`);
+        }
+      }
     }
     deal.status = 'done';
     deal.doneAt = now();
@@ -1126,6 +1137,20 @@ route('POST', '/api/admin/deals', async (req, res, body) => {
 /* ---------- Панель разработчика ---------- */
 /* Доступна только аккаунтам из DEV_USERNAMES (переменная на Render) */
 
+route('POST', '/api/dev/broadcast', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const text = String(body.text || '').trim().slice(0, 1000);
+  if (!text) return send(res, 400, { error: 'Пустое сообщение' });
+  let n = 0;
+  for (const u of Object.values(db.users)) {
+    if (u.isBot || u.id === user.id) continue;
+    serviceMessage(u.id, text);
+    push(u.id, { type: 'state' });
+    n++;
+  }
+  send(res, 200, { sent: n });
+});
+
 route('POST', '/api/dev/user', async (req, res, body, user) => {
   if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
   const uname = normUsername(body.username);
@@ -1133,7 +1158,33 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
   const target = rec && db.users[rec.owner];
   if (!target) return send(res, 404, { error: 'Пользователь не найден' });
 
+  if (isDev(target) && (body.ban || body.trust !== undefined)) {
+    return send(res, 400, { error: 'Разработчика забанить или понизить нельзя' });
+  }
+
   const done = [];
+  if (body.info) {
+    return send(res, 200, {
+      info: {
+        id: target.id,
+        name: target.name,
+        phone: (target.phone || '').replace(/^(\d{3})\d+(\d{2})$/, '$1•••$2'),
+        trust: target.trust || 0,
+        premium: isPremium(target),
+        premiumUntil: target.premiumUntil || 0,
+        banned: !!target.banned,
+        anon: !!target.anon,
+        invites: target.inviteCount || 0,
+        usernames: Object.entries(db.usernames).filter(([, v]) => v.owner === target.id && !v.channel).map(([un]) => '@' + un),
+        createdAt: target.createdAt,
+        lastSeen: target.lastSeen || 0
+      }
+    });
+  }
+  if (body.ban === true) { target.banned = true; done.push('аккаунт заблокирован'); }
+  if (body.ban === false) { target.banned = false; done.push('аккаунт разблокирован'); }
+  if (body.clearPremium) { target.premiumUntil = 0; done.push('премиум снят'); }
+  if (body.resetPhoto) { target.photo = null; done.push('аватар сброшен'); }
   if (body.verified === true) { target.verified = true; done.push('галочка выдана'); }
   if (body.verified === false) { target.verified = false; done.push('галочка снята'); }
   if (Number(body.premiumDays)) {
@@ -1266,18 +1317,31 @@ route('POST', '/api/chats/mute', async (req, res, body, user) => {
 /* ---------- Поиск ---------- */
 
 route('POST', '/api/search', async (req, res, body, user) => {
-  const q = String(body.q || '').trim().toLowerCase().slice(0, 30);
+  const q = String(body.q || '').trim().toLowerCase().replace(/^@+/, '').slice(0, 30);
   if (q.length < 2) return send(res, 200, { results: [] });
 
   const results = [];
+  const seen = {};
 
-  for (const u of Object.values(db.users)) {
-    if (u.id === user.id || !u.username) continue;
-    if (u.anon) continue; /* суперанонимность: в поиске не существует */
-    if ((u.blocked || {})[user.id]) continue;
-    const hit = u.username.includes(q) || (u.name || '').toLowerCase().includes(q);
-    if (hit) results.push({ kind: u.isBot ? 'bot' : 'user', item: publicUser(u) });
+  /* Ищем по всем юзернеймам, включая дополнительные */
+  for (const [uname, rec] of Object.entries(db.usernames)) {
+    if (rec.channel || !uname.includes(q)) continue;
+    const u = db.users[rec.owner];
+    if (!u || u.id === user.id || !u.username || seen[u.id]) continue;
+    if (u.anon || (u.blocked || {})[user.id]) continue;
+    seen[u.id] = 1;
+    results.push({ kind: u.isBot ? 'bot' : 'user', item: publicUser(u) });
     if (results.length >= 15) break;
+  }
+  /* И по именам */
+  for (const u of Object.values(db.users)) {
+    if (results.length >= 15) break;
+    if (u.id === user.id || !u.username || seen[u.id]) continue;
+    if (u.anon || (u.blocked || {})[user.id]) continue;
+    if ((u.name || '').toLowerCase().includes(q)) {
+      seen[u.id] = 1;
+      results.push({ kind: u.isBot ? 'bot' : 'user', item: publicUser(u) });
+    }
   }
 
   for (const c of Object.values(db.chats)) {
@@ -1450,7 +1514,11 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
   if (rec.channel) return send(res, 400, { error: 'Юзернейм канала продать нельзя' });
   if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
-  if (rec.main) return send(res, 400, { error: 'Основной юзернейм продать нельзя' });
+  if (rec.main) {
+    const spare = Object.entries(db.usernames).find(([un, v]) =>
+      v.owner === user.id && un !== username && !v.channel && !v.frozen);
+    if (!spare) return send(res, 400, { error: 'Это ваш единственный юзернейм — сначала займите запасной, он станет основным' });
+  }
   if ((user.trust || 0) < SELL_MIN_TRUST) return send(res, 400, { error: 'Продавать можно с доверием от ' + SELL_MIN_TRUST + '%' });
   if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты в «Сделках» — их увидит покупатель' });
 
@@ -1464,7 +1532,13 @@ route('POST', '/api/usernames/delete', async (req, res, body, user) => {
   const username = normUsername(body.username);
   const rec = db.usernames[username];
   if (!rec || rec.owner !== user.id) return send(res, 403, { error: 'Это не ваш юзернейм' });
-  if (rec.main) return send(res, 400, { error: 'Основной юзернейм удалить нельзя — без него не войти' });
+  if (rec.main) {
+    const spare = Object.entries(db.usernames).find(([un, v]) =>
+      v.owner === user.id && un !== username && !v.channel && !v.frozen);
+    if (!spare) return send(res, 400, { error: 'Это ваш единственный юзернейм — без него не войти' });
+    spare[1].main = true;
+    user.username = spare[0];
+  }
   if (rec.channel) return send(res, 400, { error: 'Это юзернейм канала' });
   if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   delete db.usernames[username]; /* снова свободен для всех */
@@ -1620,6 +1694,7 @@ const server = http.createServer(async (req, res) => {
     const token = (req.headers.authorization || '').replace('Bearer ', '');
     user = userByToken(token);
     if (!user) return send(res, 401, { error: 'Требуется вход' });
+    if (user.banned) return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
     user.lastSeen = now(); /* «был в сети» обновляется любым запросом */
   }
 

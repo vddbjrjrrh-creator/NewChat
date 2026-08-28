@@ -1073,11 +1073,23 @@ body{
         <input type="text" placeholder="юзернейм" id="adm-uname" maxlength="20" autocapitalize="off">
       </div>
       <div class="cur-row" style="flex-wrap:wrap">
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devInfo()">Инфо</button>
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({verified:true})">Выдать галочку</button>
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({verified:false})">Снять галочку</button>
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({premiumDays:30})">Премиум +30 дн.</button>
-        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({trust:100})">Доверие 100%</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({premiumDays:3650})">Премиум навсегда</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({clearPremium:true})">Снять премиум</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devAct({resetPhoto:true})">Сбросить аватар</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devTrust()">Доверие…</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devBan(true)">Забанить</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devBan(false)">Разбанить</button>
       </div>
+      <div id="dev-info" class="conv-preview" style="display:none;text-align:left;font-size:.78rem;white-space:pre-line"></div>
+      <div class="w-section" style="margin-top:14px">Рассылка всем пользователям</div>
+      <div class="field" style="margin:8px 0">
+        <input type="text" class="txt" placeholder="Текст объявления от Newchat" id="bc-text" maxlength="1000">
+      </div>
+      <button class="btn ghost" onclick="devBroadcast()">Отправить всем</button>
     </div>
 
     <div class="sheet" id="sheet-bots">
@@ -1808,6 +1820,43 @@ function openMsgMenu(id){
   b.querySelector('#msg-src').value=m.text||(m.media?(m.media.kind==='photo'?'[Фото]':'[Голосовое]'):'');
   openSheet('sheet-msg');
 }
+async function devInfo(){
+  const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
+  if(!username){toast('Введите юзернейм');return}
+  try{
+    const r=await api('/api/dev/user',{username,info:true});
+    const i=r.info;
+    const el=document.getElementById('dev-info');
+    el.style.display='block';
+    el.textContent=
+      'Имя: '+i.name+'\nТелефон: '+i.phone+'\nДоверие: '+i.trust+'%\n'+
+      'Премиум: '+(i.premium?('до '+new Date(i.premiumUntil).toLocaleDateString('ru')):'нет')+'\n'+
+      'Бан: '+(i.banned?'ДА':'нет')+' · Аноним: '+(i.anon?'да':'нет')+'\n'+
+      'Приглашено: '+i.invites+'\nЮзернеймы: '+i.usernames.join(', ')+'\n'+
+      'Создан: '+new Date(i.createdAt).toLocaleDateString('ru')+' · Был: '+(i.lastSeen?new Date(i.lastSeen).toLocaleString('ru'):'—');
+  }catch(e){}
+}
+async function devTrust(){
+  const v=prompt('Доверие 0–100:');
+  if(v===null)return;
+  const n=Math.max(0,Math.min(100,parseInt(v)||0));
+  devAct({trust:n});
+}
+async function devBan(on){
+  const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
+  if(on&&!confirm('Забанить @'+username+'? Он не сможет пользоваться Newchat вообще.'))return;
+  devAct({ban:on});
+}
+async function devBroadcast(){
+  const text=document.getElementById('bc-text').value.trim();
+  if(!text){toast('Введите текст');return}
+  if(!confirm('Отправить это ВСЕМ пользователям от имени Newchat?'))return;
+  try{
+    const r=await api('/api/dev/broadcast',{text});
+    document.getElementById('bc-text').value='';
+    toast('Отправлено: '+r.sent+' чел.');
+  }catch(e){}
+}
 async function devAct(patch){
   const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
   if(!username){toast('Введите юзернейм');return}
@@ -2356,10 +2405,11 @@ async function logCall(reason){
   }else if(reason==='rejected')text='📞 Звонок отклонён';
   else if(reason==='busy')text='📞 Занято';
   else text='📞 Звонок без ответа';
+  const chatId=call.chatId; /* call обнулится раньше, чем долетит ответ */
   try{
-    const r=await api('/api/messages/send',{chatId:call.chatId,text});
-    const c=S.chats.find(x=>x.id===call.chatId);
-    if(c){c.msgs.push(r.message);if(currentChat===call.chatId)renderMsgs(c)}
+    const r=await api('/api/messages/send',{chatId,text});
+    const c=S.chats.find(x=>x.id===chatId);
+    if(c){c.msgs.push(r.message);if(currentChat===chatId)renderMsgs(c)}
   }catch(e){}
 }
 function cleanupCall(reason){
@@ -2766,10 +2816,9 @@ function renderMarket(){
   html+=S.usernames.map(u=>{
     const right=u.forSale
       ?'<span class="tag-sale">В ПРОДАЖЕ</span><span class="price mono">'+u.price.toLocaleString('ru')+' ₽</span>'
-      :(u.main?'<span class="val" style="font-size:.74rem;color:var(--ink-2)">основной</span>'
-             :'<button class="pill-btn sell" onclick="openSell(\''+u.u+'\')">Продать</button>');
+      :'<button class="pill-btn sell" onclick="openSell(\''+u.u+'\')">Продать</button>'+(u.main?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">осн.</span>':'');
     const off=u.forSale?'<button class="pill-btn sell" onclick="unsell(\''+u.u+'\')" style="margin-left:6px">Снять</button>'
-      :(!u.main?'<button class="pill-btn sell" onclick="deleteUname(\''+u.u+'\')" style="margin-left:6px">×</button>':'');
+      :'<button class="pill-btn sell" onclick="deleteUname(\''+u.u+'\')" style="margin-left:6px">×</button>';
     return '<div class="uname-card glass-card"><div class="u">'+
       '<div class="h mono">@'+esc(u.u)+'</div>'+
       '<div class="p">'+(u.main?'Основной юзернейм':'Дополнительный')+'</div></div>'+right+off+'</div>';
