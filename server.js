@@ -219,21 +219,25 @@ function publicUser(u) {
     cover: u.cover, ava: u.ava, status: u.status,
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
     bot: !!u.isBot, anon: !!u.anon,
+    trust: u.isBot ? undefined : (u.trust || 0),
     online: u.anon ? undefined : (u.isBot ? true : isOnline(u.id)),
     lastSeen: u.anon ? 0 : (u.lastSeen || 0),
-    verified: !!u.verified, dev: !!u.dev
+    verified: !!u.verified, dev: isDev(u)
   };
 }
 function userByToken(token) {
   const id = db.tokens[token];
   return id ? db.users[id] : null;
 }
+function isDev(user) {
+  return !!(user && (user.dev || DEV_USERNAMES.includes(user.username || '')));
+}
 function isPremium(user) {
-  if (user && user.dev) return true; /* у разработчиков всегда премиум */
+  if (isDev(user)) return true; /* у разработчиков всегда премиум */
   return !!(user.premiumUntil && user.premiumUntil > now());
 }
 function slotLimit(user) {
-  if (user && user.dev) return 999;
+  if (isDev(user)) return 999;
   return isPremium(user) ? PREMIUM.slots : PREMIUM.freeSlots;
 }
 function chatIdFor(a, b) {
@@ -1098,7 +1102,7 @@ route('POST', '/api/admin/deals', async (req, res, body) => {
 /* Доступна только аккаунтам из DEV_USERNAMES (переменная на Render) */
 
 route('POST', '/api/dev/user', async (req, res, body, user) => {
-  if (!user.dev) return send(res, 403, { error: 'Только для разработчиков' });
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
   const uname = normUsername(body.username);
   const rec = db.usernames[uname];
   const target = rec && db.users[rec.owner];
@@ -1384,6 +1388,18 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
 
   rec.forSale = true;
   rec.price = price;
+  save();
+  send(res, 200, { usernames: myUsernames(user.id) });
+});
+
+route('POST', '/api/usernames/delete', async (req, res, body, user) => {
+  const username = normUsername(body.username);
+  const rec = db.usernames[username];
+  if (!rec || rec.owner !== user.id) return send(res, 403, { error: 'Это не ваш юзернейм' });
+  if (rec.main) return send(res, 400, { error: 'Основной юзернейм удалить нельзя — без него не войти' });
+  if (rec.channel) return send(res, 400, { error: 'Это юзернейм канала' });
+  if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
+  delete db.usernames[username]; /* снова свободен для всех */
   save();
   send(res, 200, { usernames: myUsernames(user.id) });
 });
