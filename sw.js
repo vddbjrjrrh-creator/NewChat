@@ -1,4 +1,4 @@
-const CACHE = 'newchat-v1';
+const CACHE = 'newchat-v2';
 const ASSETS = [
   './',
   './index.html',

@@ -270,7 +270,7 @@ function chatView(c, userId) {
     subs: c.type === 'channel' ? c.members.length : undefined,
     canWrite: type === 'dm' || (type === 'channel' && c.owner === userId),
     peer,
-    msgs: c.msgs.slice(-200).map(m => ({
+    msgs: c.msgs.filter(m => m.time > ((c.clearedAt || {})[userId] || 0)).slice(-200).map(m => ({
       id: m.id, text: m.text, time: m.time,
       media: m.deleted ? null : (m.media || null),
       reactions: m.reactions || null,
@@ -282,6 +282,7 @@ function chatView(c, userId) {
 function userChats(userId) {
   return Object.values(db.chats)
     .filter(c => c.members.includes(userId))
+    .filter(c => !(c.hiddenFor || []).includes(userId))
     .map(c => chatView(c, userId))
     .sort((a, b) => {
       const la = a.msgs[a.msgs.length - 1], lb = b.msgs[b.msgs.length - 1];
@@ -796,6 +797,10 @@ route('POST', '/api/chats/create', async (req, res, body, user) => {
   }
   if (!peer || peer.id === user.id) return send(res, 404, { error: 'Пользователь не найден' });
   const existing0 = Object.values(db.chats).find(c => !c.service && c.type !== 'channel' && c.members.includes(user.id) && c.members.includes(peer.id));
+  if (existing0 && (existing0.hiddenFor || []).includes(user.id)) {
+    existing0.hiddenFor = existing0.hiddenFor.filter(x => x !== user.id);
+    save();
+  }
   if (!existing0) {
     if (peer.anon && !peer.isBot) return send(res, 404, { error: 'Пользователь не найден' });
     if ((peer.blocked || {})[user.id]) return send(res, 403, { error: 'Пользователь ограничил переписку' });
@@ -844,15 +849,19 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
     if (p && (user.blocked || {})[p.id]) return send(res, 403, { error: 'Вы заблокировали этого пользователя — разблокируйте в меню чата' });
   }
 
-  const msg = { id: uid(), from: user.id, text, time: now(), deleted: false };
+  let outText = text;
+  /* Старые версии приложения не умеют показывать медиа — им достанется понятная надпись */
+  if (media && !text) outText = media.kind === 'photo' ? '📷 Фото' : '🎤 Голосовое сообщение';
+  const msg = { id: uid(), from: user.id, text: outText, time: now(), deleted: false };
   if (media) msg.media = media;
   chat.msgs.push(msg);
+  if (chat.hiddenFor && chat.hiddenFor.length) chat.hiddenFor = []; /* удалённый у себя чат оживает */
   save();
 
   if (chat.type === 'channel') {
     /* Пост уходит всем подписчикам */
     for (const m of chat.members) {
-      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text, media: msg.media || null, time: msg.time, out: false } });
+      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, time: msg.time, out: false } });
     }
   } else {
     const peerId = chat.members.find(m => m !== user.id);
@@ -870,10 +879,10 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
       if (q.length > 500) q.splice(0, q.length - 500);
       save();
     } else if (peerId) {
-      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, media: msg.media || null, time: msg.time, out: false } });
+      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, time: msg.time, out: false } });
     }
   }
-  send(res, 200, { message: { id: msg.id, text, media: msg.media || null, reactions: null, time: msg.time, out: true } });
+  send(res, 200, { message: { id: msg.id, text: msg.text, media: msg.media || null, reactions: null, time: msg.time, out: true } });
 });
 
 route('POST', '/api/messages/react', async (req, res, body, user) => {
@@ -1183,6 +1192,49 @@ route('POST', '/api/users/block', async (req, res, body, user) => {
   else delete user.blocked[target.id];
   save();
   send(res, 200, { blocked: !!user.blocked[target.id], chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/delete', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (chat.service) return send(res, 400, { error: 'Служебный чат удалить нельзя' });
+  if (chat.type === 'channel') return send(res, 400, { error: 'Канал удаляется в его меню' });
+  /* Скрываем у себя; копия остаётся на сервере — жалобы «Докс» и «Скам» работают как раньше */
+  chat.hiddenFor = chat.hiddenFor || [];
+  if (!chat.hiddenFor.includes(user.id)) chat.hiddenFor.push(user.id);
+  chat.clearedAt = chat.clearedAt || {};
+  chat.clearedAt[user.id] = now(); /* при возврате чат будет чистым */
+  save();
+  send(res, 200, { chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/clear', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  chat.clearedAt = chat.clearedAt || {};
+  chat.clearedAt[user.id] = now();
+  save();
+  send(res, 200, { chats: userChats(user.id) });
+});
+
+route('POST', '/api/channels/delete', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || chat.type !== 'channel') return send(res, 404, { error: 'Канал не найден' });
+  if (chat.owner !== user.id) return send(res, 403, { error: 'Удалить канал может только владелец' });
+
+  const members = chat.members.slice();
+  if (chat.uname && db.usernames[chat.uname] && db.usernames[chat.uname].channel === chat.id) {
+    delete db.usernames[chat.uname]; /* юзернейм канала освобождается */
+  }
+  delete db.chats[chat.id];
+  save();
+  for (const m of members) {
+    if (m !== user.id) {
+      serviceMessage(m, `Канал «${chat.title}» удалён владельцем.`);
+      push(m, { type: 'state' });
+    }
+  }
+  send(res, 200, { chats: userChats(user.id) });
 });
 
 route('POST', '/api/chats/mute', async (req, res, body, user) => {

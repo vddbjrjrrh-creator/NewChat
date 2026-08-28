@@ -652,6 +652,21 @@ body{
       <button class="btn" onclick="createChat()">Начать чат</button>
     </div>
 
+    <div class="sheet" id="sheet-perms">
+      <div class="grip"></div>
+      <h3>Разрешения</h3>
+      <p class="desc">Чтобы Newchat работал как настоящий мессенджер, дайте два разрешения. Браузер спросит — нажмите «Разрешить».</p>
+      <button class="report-opt" onclick="askNotifPerm(this)">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M18 9a6 6 0 10-12 0c0 6-2 7-2 7h16s-2-1-2-7"/><path d="M10 20a2 2 0 004 0"/></svg></span>
+        <span><b>Уведомления</b><span>О новых сообщениях, когда приложение свёрнуто</span></span>
+      </button>
+      <button class="report-opt" onclick="askMicPerm(this)">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></span>
+        <span><b>Микрофон</b><span>Для записи голосовых сообщений</span></span>
+      </button>
+      <button class="btn" style="margin-top:14px" onclick="closeSheets()">Готово</button>
+    </div>
+
     <div class="sheet" id="sheet-newchannel">
       <div class="grip"></div>
       <h3>Новый канал</h3>
@@ -908,6 +923,7 @@ body{
           Мои боты<div class="spacer"></div><span class="val" id="p-bots">0 из 3</span>
         </div>
 
+        <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:4px 0 2px">Newchat · версия 4</div>
         <div class="pitem glass-card" id="p-admin" style="display:none" onclick="openSheet('sheet-admin')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19 12a7 7 0 01-.1 1.2l2 1.6-2 3.4-2.4-1a7 7 0 01-2 1.2L14 21h-4l-.5-2.6a7 7 0 01-2-1.2l-2.4 1-2-3.4 2-1.6A7 7 0 015 12a7 7 0 01.1-1.2l-2-1.6 2-3.4 2.4 1a7 7 0 012-1.2L10 3h4l.5 2.6a7 7 0 012 1.2l2.4-1 2 3.4-2 1.6c.06.4.1.8.1 1.2z"/></svg>
           Админ-панель<div class="spacer"></div><span class="val" style="color:var(--accent)">dev</span>
@@ -1211,7 +1227,7 @@ async function codeNext(){
     const r=await api('/api/auth/verify',{phone:pendingPhone,code:c});
     token=r.token;tokenStore.set(token);
     if(r.needsSetup){show('s-setup')}
-    else{S=r.state;connectWS();go('s-chats')}
+    else{S=r.state;connectWS();enterApp()}
   }catch(e){}
 }
 async function finishSetup(){
@@ -1224,9 +1240,38 @@ async function finishSetup(){
     let ref='';try{ref=localStorage.getItem('newchat_ref')||''}catch(e){}
     const r=await api('/api/profile/setup',{name,username,ref});
     try{localStorage.removeItem('newchat_ref')}catch(e){}
-    S=r.state;connectWS();go('s-chats');
+    S=r.state;connectWS();enterApp();
   }catch(e){}
 }
+/* ============ ВХОД В ПРИЛОЖЕНИЕ ============ */
+function enterApp(){
+  go('s-chats');
+  /* Один раз после первого входа просим разрешения — как обычный мессенджер */
+  let asked=false;
+  try{asked=localStorage.getItem('newchat_perms')==='1'}catch(e){}
+  const notifOk=typeof Notification!=='undefined'&&Notification.permission==='granted';
+  if(!asked&&!notifOk){
+    try{localStorage.setItem('newchat_perms','1')}catch(e){}
+    setTimeout(()=>openSheet('sheet-perms'),600);
+  }
+}
+async function askNotifPerm(btn){
+  if(typeof Notification==='undefined'){toast('Браузер не поддерживает уведомления');return}
+  const p=await Notification.requestPermission();
+  if(p==='granted'){
+    try{localStorage.setItem('newchat_notif','1')}catch(e){}
+    btn.style.opacity='.45';toast('Уведомления включены');
+  }else toast('Не разрешено — можно включить позже в профиле');
+}
+async function askMicPerm(btn){
+  if(!navigator.mediaDevices){toast('Браузер не даёт доступ к микрофону');return}
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({audio:true});
+    st.getTracks().forEach(t=>t.stop());
+    btn.style.opacity='.45';toast('Микрофон разрешён');
+  }catch(e){toast('Не разрешено — голосовые не будут работать')}
+}
+
 /* ============ ВХОД ЧЕРЕЗ TELEGRAM ============ */
 let tgSession=null;
 let tgLink='';
@@ -1330,7 +1375,7 @@ async function checkTgOnce(){
   token=d.token;tokenStore.set(token);
 
   if(d.needsSetup){show('s-setup')}
-  else{S=d.state;connectWS();go('s-chats')}
+  else{S=d.state;connectWS();enterApp()}
 }
 async function manualCheck(){
   toast('Проверяем…');
@@ -1487,7 +1532,7 @@ function openChat(id){
   if(c.type==='channel')sub=(c.subs||1)+' подписчиков'+(c.mine?' · ваш канал':'');
   if(peer.bot)sub='@'+peer.username+' · бот';
   document.getElementById('chat-sub').textContent=sub;
-  document.getElementById('chat-menu-btn').style.display=(c.service||c.type==='channel')?'none':'flex';
+  document.getElementById('chat-menu-btn').style.display=c.service?'none':'flex';
   const comp=document.querySelector('#s-chat .composer');
   comp.style.display=(c.service||c.canWrite===false)?'none':'flex';
   /* Подписчику канала показываем, почему нельзя писать, и даём отписаться */
@@ -1534,11 +1579,49 @@ function openChatMenu(){
   const c=S.chats.find(x=>x.id===currentChat);
   if(!c)return;
   const b=document.getElementById('chatmenu-body');
+  if(c.type==='channel'){
+    b.innerHTML=
+      '<button class="report-opt" onclick="muteChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M9 6l5-3v18l-5-3H5V6h4z"/>'+(c.muted?'':'<path d="M2 2l20 20"/>')+'</svg></span><span><b>'+(c.muted?'Включить звук':'Выключить звук')+'</b><span>Уведомления этого канала</span></span></button>'+
+      (c.mine
+        ?'<button class="report-opt" onclick="deleteChannel()"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span><span><b>Удалить канал</b><span>Навсегда, у всех подписчиков</span></span></button>'
+        :'<button class="report-opt" onclick="closeSheets();leaveChannel(\''+c.id+'\')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M15 5l-7 7 7 7"/></svg></span><span><b>Отписаться</b><span>Канал пропадёт из списка</span></span></button>');
+    openSheet('sheet-chatmenu');
+    return;
+  }
   b.innerHTML=
     '<button class="report-opt" onclick="muteChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M9 6l5-3v18l-5-3H5V6h4z"/>'+(c.muted?'':'<path d="M2 2l20 20"/>')+'</svg></span><span><b>'+(c.muted?'Включить звук':'Выключить звук')+'</b><span>Уведомления этого чата</span></span></button>'+
     '<button class="report-opt" onclick="blockPeer()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg></span><span><b>'+(c.blocked?'Разблокировать':'Заблокировать')+'</b><span>'+(c.blocked?'Снова разрешить переписку':'Собеседник не сможет вам писать')+'</span></span></button>'+
+    '<button class="report-opt" onclick="clearChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 6h16M6 6l1.5 14h9L18 6"/><path d="M10 11v5M14 11v5"/></svg></span><span><b>Очистить историю</b><span>Только у вас, собеседник всё видит</span></span></button>'+
+    '<button class="report-opt" onclick="deleteChat()"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span><span><b>Удалить чат</b><span>Пропадёт у вас; копия для жалоб сохраняется</span></span></button>'+
     '<button class="report-opt" onclick="closeSheets();openSheet(\'sheet-report\')"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v4"/></svg></span><span><b>Пожаловаться</b><span>Докс или скам — уйдёт в полицию</span></span></button>';
   openSheet('sheet-chatmenu');
+}
+async function clearChat(){
+  if(!confirm('Очистить историю у себя? У собеседника переписка останется.'))return;
+  try{
+    const r=await api('/api/chats/clear',{chatId:currentChat});
+    S.chats=r.chats;closeSheets();
+    const c=S.chats.find(x=>x.id===currentChat);
+    if(c)renderMsgs(c);
+    toast('История очищена');
+  }catch(e){}
+}
+async function deleteChat(){
+  if(!confirm('Удалить чат? Он пропадёт из вашего списка. Копия хранится на сервере для жалоб «Докс» и «Скам».'))return;
+  try{
+    const r=await api('/api/chats/delete',{chatId:currentChat});
+    S.chats=r.chats;closeSheets();go('s-chats');
+    toast('Чат удалён');
+  }catch(e){}
+}
+async function deleteChannel(){
+  const c=S.chats.find(x=>x.id===currentChat);
+  if(!confirm('Удалить канал «'+((c.peer||{}).name||'')+'» навсегда? Он пропадёт у всех '+(c.subs||1)+' подписчиков, юзернейм освободится.'))return;
+  try{
+    const r=await api('/api/channels/delete',{chatId:currentChat});
+    S.chats=r.chats;closeSheets();go('s-chats');
+    toast('Канал удалён');
+  }catch(e){}
 }
 async function muteChat(){
   const c=S.chats.find(x=>x.id===currentChat);
@@ -1581,7 +1664,8 @@ function renderMsgs(c){
     else{
       if(m.media&&m.media.kind==='photo')body+='<img src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">';
       if(m.media&&m.media.kind==='voice')body+='<audio controls preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></audio>';
-      if(m.text)body+=esc(m.text);
+      const stub=m.media&&(m.text==='📷 Фото'||m.text==='🎤 Голосовое сообщение');
+      if(m.text&&!stub)body+=esc(m.text);
     }
     let reacts='';
     if(m.reactions){
@@ -1641,6 +1725,7 @@ function viewPhoto(src){
 }
 function shrinkImage(file,maxSide,q,cb){
   const img=new Image();
+  img.onerror=()=>toast('Не удалось прочитать фото — попробуйте другое (JPG или PNG)');
   img.onload=()=>{
     const k=Math.min(1,maxSide/Math.max(img.width,img.height));
     const c=document.createElement('canvas');
@@ -2065,10 +2150,17 @@ const setStore={
   get:k=>{try{return localStorage.getItem('newchat_'+k)==='1'}catch(e){return false}},
   set:(k,v)=>{try{localStorage.setItem('newchat_'+k,v?'1':'0')}catch(e){}}
 };
+function notifOn(){
+  if(typeof Notification==='undefined'||Notification.permission!=='granted')return false;
+  try{const v=localStorage.getItem('newchat_notif');return v===null?true:v==='1'}catch(e){return true}
+}
+function soundOn(){
+  try{const v=localStorage.getItem('newchat_sound');return v===null?true:v==='1'}catch(e){return true}
+}
 function renderSettings(){
   document.getElementById('tgl-anon').classList.toggle('on',!!(S&&S.user.anonMode));
-  document.getElementById('tgl-notif').classList.toggle('on',setStore.get('notif')&&typeof Notification!=='undefined'&&Notification.permission==='granted');
-  document.getElementById('tgl-sound').classList.toggle('on',setStore.get('sound'));
+  document.getElementById('tgl-notif').classList.toggle('on',notifOn());
+  document.getElementById('tgl-sound').classList.toggle('on',soundOn());
 }
 async function toggleAnon(){
   const on=!S.user.anonMode;
@@ -2081,7 +2173,7 @@ async function toggleAnon(){
 }
 async function toggleNotif(){
   if(typeof Notification==='undefined'){toast('Браузер не поддерживает уведомления');return}
-  const on=!(setStore.get('notif')&&Notification.permission==='granted');
+  const on=!notifOn();
   if(on){
     const p=await Notification.requestPermission();
     if(p!=='granted'){toast('Разрешите уведомления в настройках браузера');return}
@@ -2090,7 +2182,7 @@ async function toggleNotif(){
   toast(on?'Уведомления включены':'Уведомления выключены');
 }
 function toggleSound(){
-  const on=!setStore.get('sound');
+  const on=!soundOn();
   setStore.set('sound',on);renderSettings();
   if(on)beep();
   toast(on?'Звук включён':'Звук выключен');
@@ -2108,10 +2200,10 @@ function beep(){
 function notifyMsg(chatId,text){
   const c=S&&S.chats.find(x=>x.id===chatId);
   if(!c||c.muted)return; /* чат без звука молчит совсем */
-  const hidden=document.hidden||!document.querySelector('#s-chat.on')||currentChat!==chatId;
+  const hidden=document.hidden||!document.querySelector('#s-chat.active')||currentChat!==chatId;
   if(!hidden)return;
-  if(setStore.get('sound'))beep();
-  if(setStore.get('notif')&&typeof Notification!=='undefined'&&Notification.permission==='granted'){
+  if(soundOn())beep();
+  if(notifOn()){
     try{
       const n=new Notification((c.peer||{}).name||'Newchat',{body:text.slice(0,80),tag:chatId});
       n.onclick=()=>{window.focus();openChat(chatId);n.close()};
@@ -2390,7 +2482,7 @@ async function boot(){
     if(res.ok){
       const r=await res.json().catch(()=>null);
       if(r&&r.state){
-        S=r.state;connectWS();go('s-chats');
+        S=r.state;connectWS();enterApp();
         return;
       }
     }
