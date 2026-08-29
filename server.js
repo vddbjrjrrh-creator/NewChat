@@ -29,7 +29,18 @@ const MAIL_HOST = process.env.MAIL_HOST || 'smtp.gmail.com';
 const MAIL_PORT = Number(process.env.MAIL_PORT || 465);
 /* Ключ Brevo: отправка писем по HTTPS. Нужен там, где хостинг режет порты SMTP. */
 const BREVO_KEY = process.env.BREVO_API_KEY || '';
-const MAIL_ENABLED = !!((MAIL_USER && MAIL_PASS) || BREVO_KEY);
+/* Почтовый мостик на Google Apps Script: письма шлёт твой же Gmail по HTTPS.
+   Работает из любой страны и через любой хостинг. */
+const MAIL_HOOK_URL = process.env.MAIL_HOOK_URL || '';
+const MAIL_HOOK_SECRET = process.env.MAIL_HOOK_SECRET || '';
+/* SendPulse: российский сервис, HTTPS API, работает без VPN и без иностранного телефона */
+const SP_ID = process.env.SENDPULSE_ID || '';
+const SP_SECRET = process.env.SENDPULSE_SECRET || '';
+const SP_FROM = process.env.SENDPULSE_FROM || '';
+/* Mailopost и Rusender — российские сервисы, работают без VPN */
+const MP_KEY = process.env.MAILOPOST_KEY || '';
+const RS_KEY = process.env.RUSENDER_KEY || '';
+const MAIL_ENABLED = !!((MAIL_USER && MAIL_PASS) || BREVO_KEY || MAIL_HOOK_URL || (SP_ID && SP_SECRET) || MP_KEY || RS_KEY);
 
 /* Telegram-бот для подтверждения номера. Бесплатно и без лимитов. */
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -935,6 +946,106 @@ function brevoSend(to, subject, html) {
   });
 }
 
+function hookSend(to, subject, html) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const { URL } = require('url');
+    const u = new URL(MAIL_HOOK_URL);
+    const payload = JSON.stringify({ secret: MAIL_HOOK_SECRET, to, subject, html });
+    const go = (host, path, redirects) => {
+      const req = https.request({ hostname: host, path, method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
+      }, res => {
+        /* Apps Script отвечает через редирект — идём за ним */
+        if ([301, 302, 307].includes(res.statusCode) && res.headers.location && redirects > 0) {
+          const r = new URL(res.headers.location);
+          const req2 = https.request({ hostname: r.hostname, path: r.pathname + r.search, method: 'GET' }, res2 => {
+            let b = '';
+            res2.on('data', d => b += d);
+            res2.on('end', () => b.includes('"ok"') || b.includes('ok') ? resolve(true) : reject(new Error('мостик: ' + b.slice(0, 120))));
+          });
+          req2.on('error', reject);
+          req2.end();
+          return;
+        }
+        let b = '';
+        res.on('data', d => b += d);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300 && (b.includes('ok') || b === '')) resolve(true);
+          else reject(new Error('мостик ' + res.statusCode + ': ' + b.slice(0, 120)));
+        });
+      });
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error('мостик: таймаут')); });
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    };
+    go(u.hostname, u.pathname + u.search, 2);
+  });
+}
+
+function httpsJson(host, path, method, headers, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const payload = bodyObj ? JSON.stringify(bodyObj) : null;
+    const h = Object.assign({ 'content-type': 'application/json' }, headers || {});
+    if (payload) h['content-length'] = Buffer.byteLength(payload);
+    const req = https.request({ hostname: host, path, method, headers: h }, res => {
+      let b = '';
+      res.on('data', d => b += d);
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(b); } catch (e) {}
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve(parsed || {});
+        else reject(new Error(res.statusCode + ': ' + b.slice(0, 160)));
+      });
+    });
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('таймаут')); });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+let spToken = { value: '', until: 0 };
+async function sendPulse(to, subject, html) {
+  if (!spToken.value || spToken.until < now()) {
+    const r = await httpsJson('api.sendpulse.com', '/oauth/access_token', 'POST', null, {
+      grant_type: 'client_credentials', client_id: SP_ID, client_secret: SP_SECRET
+    });
+    if (!r.access_token) throw new Error('не выдан токен');
+    spToken = { value: r.access_token, until: now() + (r.expires_in || 3600) * 1000 - 60000 };
+  }
+  await httpsJson('api.sendpulse.com', '/smtp/emails', 'POST',
+    { authorization: 'Bearer ' + spToken.value },
+    { email: {
+        html: Buffer.from(html, 'utf8').toString('base64'),
+        text: 'Ваш код для входа в Newchat',
+        subject,
+        from: { name: 'Newchat', email: MAIL_USER || SP_FROM },
+        to: [{ email: to }]
+    } });
+  return true;
+}
+
+async function mailopost(to, subject, html) {
+  await httpsJson('api.mailopost.ru', '/v1/email/messages', 'POST',
+    { authorization: 'Bearer ' + MP_KEY },
+    { from_email: MAIL_USER, from_name: 'Newchat', to, subject, html, payment: 'credit' });
+  return true;
+}
+
+async function rusender(to, subject, html) {
+  await httpsJson('api.beta.rusender.ru', '/api/v1/external-mails/send', 'POST',
+    { 'X-Api-Key': RS_KEY },
+    { mail: {
+        to: { email: to },
+        from: { email: MAIL_USER, name: 'Newchat' },
+        subject, html
+    } });
+  return true;
+}
+
 async function sendMail(to, code) {
   if (!MAIL_ENABLED) return { sent: false, reason: 'not_configured' };
   const html = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:0 auto;padding:28px 24px;background:#EEF0F5;border-radius:18px">' +
@@ -956,6 +1067,38 @@ async function sendMail(to, code) {
     '',
     Buffer.from(html, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n')
   ].join('\r\n');
+
+  /* Российские сервисы — работают без VPN */
+  if (MP_KEY) {
+    try { await mailopost(to, code + ' — код входа в Newchat', html); return { sent: true }; }
+    catch (e) { console.error('Почта (Mailopost):', e.message); }
+  }
+  if (RS_KEY) {
+    try { await rusender(to, code + ' — код входа в Newchat', html); return { sent: true }; }
+    catch (e) { console.error('Почта (Rusender):', e.message); }
+  }
+
+  /* SendPulse — работает из России по обычному HTTPS */
+  if (SP_ID && SP_SECRET) {
+    try {
+      await sendPulse(to, code + ' — код входа в Newchat', html);
+      return { sent: true };
+    } catch (e) {
+      console.error('Почта (SendPulse):', e.message);
+      if (!MAIL_HOOK_URL && !BREVO_KEY && !(MAIL_USER && MAIL_PASS)) return { sent: false, reason: e.message };
+    }
+  }
+
+  /* Мостик через Google — самый надёжный путь из России */
+  if (MAIL_HOOK_URL) {
+    try {
+      await hookSend(to, code + ' — код входа в Newchat', html);
+      return { sent: true };
+    } catch (e) {
+      console.error('Почта (мостик):', e.message);
+      if (!BREVO_KEY && !(MAIL_USER && MAIL_PASS)) return { sent: false, reason: e.message };
+    }
+  }
 
   /* Сначала HTTPS-путь: его хостинги не блокируют */
   if (BREVO_KEY) {
