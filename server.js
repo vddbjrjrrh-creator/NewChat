@@ -793,32 +793,111 @@ function validEmail(v) {
   return /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(v);
 }
 
+/* Отправка письма напрямую по SMTP — без внешних библиотек,
+   чтобы почта работала сразу после заливки, без установки пакетов. */
+function smtpSend(opts) {
+  return new Promise((resolve, reject) => {
+    const tls = require('tls');
+    const sock = tls.connect({ host: opts.host, port: opts.port, servername: opts.host });
+    sock.setEncoding('utf8');
+    sock.setTimeout(20000);
+
+    let buf = '';
+    const queue = [];        /* ожидания ответов по очереди */
+    let done = false;
+
+    function fail(e) {
+      if (done) return;
+      done = true;
+      try { sock.destroy(); } catch (x) {}
+      reject(e instanceof Error ? e : new Error(String(e)));
+    }
+
+    /* Разбираем поток на законченные ответы SMTP (учитывая многострочные) */
+    sock.on('data', chunk => {
+      buf += chunk;
+      let nl;
+      while ((nl = buf.indexOf('\r\n')) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 2);
+        if (/^\d{3}-/.test(line)) continue;      /* продолжение — ждём финальную строку */
+        const code = line.slice(0, 3);
+        const waiter = queue.shift();
+        if (waiter) waiter(code, line);
+      }
+    });
+
+    function reply() {
+      return new Promise(res => queue.push((code, line) => res({ code, line })));
+    }
+    async function expect(codes, what) {
+      const r = await reply();
+      if (!codes.includes(r.code)) throw new Error('SMTP ' + what + ' → ' + r.line);
+      return r;
+    }
+    function say(text) { sock.write(text + '\r\n'); }
+
+    sock.on('timeout', () => fail(new Error('SMTP: таймаут')));
+    sock.on('error', fail);
+
+    sock.on('secureConnect', async () => {
+      try {
+        await expect(['220'], 'приветствие');
+        say('EHLO newchat');
+        await expect(['250'], 'EHLO');
+        say('AUTH LOGIN');
+        await expect(['334'], 'AUTH');
+        say(Buffer.from(opts.user).toString('base64'));
+        await expect(['334'], 'логин');
+        say(Buffer.from(opts.pass).toString('base64'));
+        await expect(['235'], 'пароль (проверьте пароль приложения)');
+        say('MAIL FROM:<' + opts.user + '>');
+        await expect(['250'], 'MAIL FROM');
+        say('RCPT TO:<' + opts.to + '>');
+        await expect(['250', '251'], 'RCPT TO');
+        say('DATA');
+        await expect(['354'], 'DATA');
+        sock.write(opts.message + '\r\n.\r\n');
+        await expect(['250'], 'отправка письма');
+        say('QUIT');
+        done = true;
+        sock.end();
+        resolve(true);
+      } catch (e) {
+        fail(e);
+      }
+    });
+  });
+}
+
 async function sendMail(to, code) {
   if (!MAIL_ENABLED) return { sent: false, reason: 'not_configured' };
+  const html = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:0 auto;padding:28px 24px;background:#EEF0F5;border-radius:18px">' +
+    '<div style="text-align:center;font-size:22px;font-weight:800;color:#17181D;margin-bottom:6px">Newchat</div>' +
+    '<div style="text-align:center;font-size:13px;color:#787A86;margin-bottom:22px">Мессенджер, где скамеры отвечают по закону</div>' +
+    '<div style="background:#fff;border-radius:14px;padding:22px;text-align:center">' +
+    '<div style="font-size:13px;color:#787A86;margin-bottom:10px">Ваш код для входа</div>' +
+    '<div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#6C5CE7">' + code + '</div>' +
+    '<div style="font-size:12px;color:#787A86;margin-top:12px">Действует 10 минут</div></div>' +
+    '<div style="font-size:11px;color:#9A9CA8;text-align:center;margin-top:18px">Если вы не запрашивали вход, просто удалите это письмо.</div></div>';
+
+  const message = [
+    'From: Newchat <' + MAIL_USER + '>',
+    'To: ' + to,
+    'Subject: =?UTF-8?B?' + Buffer.from(code + ' - kod vhoda v Newchat').toString('base64') + '?=',
+    'MIME-Version: 1.0',
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(html, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n')
+  ].join('\r\n');
+
   try {
-    const nodemailer = require('nodemailer');
-    const tx = nodemailer.createTransport({
-      host: MAIL_HOST, port: MAIL_PORT, secure: MAIL_PORT === 465,
-      auth: { user: MAIL_USER, pass: MAIL_PASS }
-    });
-    await tx.sendMail({
-      from: '"Newchat" <' + MAIL_USER + '>',
-      to,
-      subject: code + ' — код входа в Newchat',
-      text: 'Ваш код для входа в Newchat: ' + code + '\nКод действует 10 минут. Если вы не запрашивали вход — просто удалите это письмо.',
-      html: '<div style="font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:0 auto;padding:28px 24px;background:#EEF0F5;border-radius:18px">' +
-        '<div style="text-align:center;font-size:22px;font-weight:800;color:#17181D;margin-bottom:6px">Newchat</div>' +
-        '<div style="text-align:center;font-size:13px;color:#787A86;margin-bottom:22px">Мессенджер, где скамеры отвечают по закону</div>' +
-        '<div style="background:#fff;border-radius:14px;padding:22px;text-align:center">' +
-        '<div style="font-size:13px;color:#787A86;margin-bottom:10px">Ваш код для входа</div>' +
-        '<div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#6C5CE7">' + code + '</div>' +
-        '<div style="font-size:12px;color:#787A86;margin-top:12px">Действует 10 минут</div></div>' +
-        '<div style="font-size:11px;color:#9A9CA8;text-align:center;margin-top:18px">Если вы не запрашивали вход, просто удалите это письмо.</div></div>'
-    });
+    await smtpSend({ host: MAIL_HOST, port: MAIL_PORT, user: MAIL_USER, pass: MAIL_PASS, to, message });
     return { sent: true };
   } catch (e) {
     console.error('Почта:', e.message);
-    return { sent: false, reason: 'Не удалось отправить письмо' };
+    return { sent: false, reason: 'Не удалось отправить письмо: ' + e.message };
   }
 }
 

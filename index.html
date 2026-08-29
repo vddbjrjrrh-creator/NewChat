@@ -1361,7 +1361,7 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2102,6 +2102,29 @@ async function leaveChannel(id){
     toast('Вы отписались');
   }catch(e){}
 }
+/* base64 → blob: один раз на сообщение, чтобы не гонять мегабайты по DOM */
+const vidUrls={};
+function dataToBlobUrl(data){
+  const i=data.indexOf(',');
+  const meta=data.slice(5,i);
+  const mime=meta.split(';')[0]||'video/webm';
+  const bin=atob(data.slice(i+1));
+  const len=bin.length;
+  const arr=new Uint8Array(len);
+  for(let k=0;k<len;k++)arr[k]=bin.charCodeAt(k);
+  return URL.createObjectURL(new Blob([arr],{type:mime}));
+}
+function attachVideos(c){
+  document.querySelectorAll('#chat-msgs video[data-vid]').forEach(v=>{
+    if(v.src)return;
+    const m=c.msgs.find(x=>x.id===v.dataset.vid);
+    if(!m||!m.media)return;
+    try{
+      if(!vidUrls[m.id])vidUrls[m.id]=dataToBlobUrl(m.media.data);
+      v.src=vidUrls[m.id];
+    }catch(e){}
+  });
+}
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
   if(!c.msgs.length){
@@ -2119,8 +2142,10 @@ function renderMsgs(c){
       if(m.reply)body+='<div style="border-left:2.5px solid '+(m.out?'rgba(255,255,255,.7)':'var(--accent)')+';padding:2px 8px;margin-bottom:5px;border-radius:4px;background:'+(m.out?'rgba(255,255,255,.15)':'var(--accent-soft)')+'"><b style="font-size:.72rem">'+esc(m.reply.name)+'</b><div style="font-size:.76rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.reply.text)+'</div></div>';
       if(m.media&&m.media.kind==='photo')body+='<img src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">';
       if(m.media&&m.media.kind==='voice')body+='<audio controls preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></audio>';
-      if(m.media&&m.media.kind==='video')body+='<video controls playsinline preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></video>';
-      if(m.media&&m.media.kind==='circle')body+='<video class="circle" controls playsinline preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></video>';
+      if(m.media&&(m.media.kind==='video'||m.media.kind==='circle')){
+        /* WebView не проигрывает base64 в src — подставляем blob-ссылку после отрисовки */
+        body+='<video'+(m.media.kind==='circle'?' class="circle"':'')+' controls playsinline preload="metadata" data-vid="'+m.id+'" onclick="event.stopPropagation()"></video>';
+      }
       const stub=m.media&&['📷 Фото','🎤 Голосовое сообщение','🎬 Видео','⭕ Видеосообщение'].includes(m.text);
       if(m.text&&!stub)body+=esc(m.text);
     }
@@ -2134,6 +2159,7 @@ function renderMsgs(c){
       '<span class="t"'+(m.out?' style="color:#fff"':'')+'>'+tick+fmtTime(m.time)+'</span></div>';
   }).join('');
   box.scrollTop=box.scrollHeight;
+  attachVideos(c);
 }
 async function sendMsg(){
   const inp=document.getElementById('composer-input');
