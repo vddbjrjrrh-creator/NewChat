@@ -1036,13 +1036,23 @@ async function mailopost(to, subject, html) {
 }
 
 async function rusender(to, subject, html) {
-  await httpsJson('api.beta.rusender.ru', '/api/v1/external-mails/send', 'POST',
-    { 'X-Api-Key': RS_KEY },
-    { mail: {
-        to: { email: to },
-        from: { email: MAIL_USER, name: 'Newchat' },
-        subject, html
-    } });
+  /* Хост api.beta.* больше не отвечает — рабочий адрес api.rusender.ru.
+     Новые ключи (rs_ck_v1_...) идут через Bearer и id ключа отправки. */
+  const body = { mail: {
+    to: { email: to },
+    from: { email: MAIL_USER, name: 'Newchat' },
+    subject, html
+  } };
+  const isNew = /^rs_ck_v1_/.test(RS_KEY);
+  const keyId = process.env.RUSENDER_KEY_ID || '';
+  if (isNew) {
+    if (!keyId) throw new Error('для ключа rs_ck_v1_ нужна переменная RUSENDER_KEY_ID');
+    await httpsJson('api.rusender.ru', '/api/v1/external-mails/send/' + keyId, 'POST',
+      { authorization: 'Bearer ' + RS_KEY }, body);
+  } else {
+    await httpsJson('api.rusender.ru', '/api/v1/external-mails/send', 'POST',
+      { 'X-Api-Key': RS_KEY }, body);
+  }
   return true;
 }
 
@@ -1144,7 +1154,7 @@ route('GET', '/api/mailcheck', async (req, res) => {
     brevo: !!BREVO_KEY,
     smtp: !!(MAIL_USER && MAIL_PASS),
     from: MAIL_USER || null,
-    build: 'rusender-2'
+    build: 'rusender-3'
   });
 });
 
