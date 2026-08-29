@@ -1154,6 +1154,11 @@ body{
           Админ-панель<div class="spacer"></div><span class="val" style="color:var(--accent)">dev</span>
         </div>
 
+        <div class="pitem glass-card" onclick="videoDiag()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="M16 10l6-3v10l-6-3"/></svg>
+          Проверка видео<div class="spacer"></div><span class="val">диагностика</span>
+        </div>
+
         <div class="pitem glass-card" onclick="manualUpdateCheck()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12a8 8 0 11-2.3-5.7"/><path d="M20 4v5h-5"/></svg>
           Проверить обновления<div class="spacer"></div><span class="val" id="p-updver"></span>
@@ -1386,10 +1391,19 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 13;
+const APP_VERSION = 14;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
+async function videoDiag(){
+  const probe=document.createElement('video');
+  const fmts=[['MP4 H.264','video/mp4;codecs="avc1.42E01E"'],['WebM VP8','video/webm;codecs="vp8"'],['WebM VP9','video/webm;codecs="vp9"'],['WebM H.264','video/webm;codecs="h264"']];
+  const play=fmts.map(f=>f[0]+': '+(probe.canPlayType(f[1])||'нет')).join('\n');
+  const recs=['video/mp4','video/webm;codecs=h264,opus','video/webm;codecs=vp8,opus','video/webm']
+    .map(t=>{try{return t+': '+(MediaRecorder.isTypeSupported(t)?'да':'нет')}catch(e){return t+': ошибка'}}).join('\n');
+  const chosen=pickVideoMime();
+  alert('ВОСПРОИЗВЕДЕНИЕ:\n'+play+'\n\nЗАПИСЬ:\n'+recs+'\n\nВыбран для кружков:\n'+(chosen||'ничего не подошло')+'\n\nСкриншот этого окна — разработчику.');
+}
 async function manualUpdateCheck(){
   toast('Проверяем…');
   try{
@@ -2178,10 +2192,9 @@ function attachVideos(c){
       if(!vidUrls[m.id])vidUrls[m.id]=dataToBlobUrl(m.media.data);
       const url=vidUrls[m.id];
       v.src=url;
-      const ready=()=>w.classList.add('ready');
+      const ready=()=>{if(v.readyState>=2)w.classList.add('ready')};
       v.onloadeddata=ready;
-      v.oncanplay=ready;
-      v.onplaying=()=>{ready();w.classList.add('playing');v.muted=false};
+      v.onplaying=()=>{w.classList.add('ready');w.classList.add('playing');v.muted=false};
       v.onerror=()=>vFail(w,url);
       v.onpause=()=>w.classList.remove('playing');
       v.onended=()=>{w.classList.remove('playing');v.currentTime=0};
@@ -2663,6 +2676,22 @@ function sendVideo(input){
   fr.readAsDataURL(f);
 }
 
+/* Выбор кодека для записи: сперва то, что этот телефон играет наверняка */
+function pickVideoMime(){
+  const probe=document.createElement('video');
+  const cands=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=h264,opus','video/webm;codecs=vp8,opus','video/webm;codecs=vp9,opus','video/webm'];
+  const rec=t=>{try{return MediaRecorder.isTypeSupported(t)}catch(e){return false}};
+  const play=t=>{
+    try{
+      const base=t.split(';')[0];
+      const c=t.includes('codecs=')?base+';codecs="'+t.split('codecs=')[1]+'"':base;
+      return probe.canPlayType(c);
+    }catch(e){return ''}
+  };
+  return cands.find(t=>rec(t)&&play(t)==='probably')
+      || cands.find(t=>rec(t)&&play(t)==='maybe')
+      || cands.find(rec) || '';
+}
 /* ===== КРУЖКИ ===== */
 let circRec=null,circStream=null,circChunks=[],circT0=0,circTimer=null;
 async function startCircle(){
@@ -2677,16 +2706,7 @@ async function startCircle(){
   pv.srcObject=circStream;
   document.getElementById('rec-ring').classList.add('on');
 
-  /* Пишем в кодеке, который этот же телефон точно проигрывает */
-  const probe=document.createElement('video');
-  const cands=['video/mp4','video/webm;codecs=h264,opus','video/webm;codecs=h264','video/webm;codecs=vp8,opus','video/webm'];
-  const mime=cands.find(t=>{
-    try{
-      if(!MediaRecorder.isTypeSupported(t))return false;
-      const base=t.split(';')[0];
-      return probe.canPlayType(base+(t.includes('codecs=')?';codecs="'+t.split('codecs=')[1]+'"':''))!=='';
-    }catch(e){return false}
-  })||cands.find(t=>{try{return MediaRecorder.isTypeSupported(t)}catch(e){return false}})||'';
+  const mime=pickVideoMime();
   try{
     circRec=new MediaRecorder(circStream,mime?{mimeType:mime,videoBitsPerSecond:280000,audioBitsPerSecond:24000}:{});
   }catch(e){circRec=new MediaRecorder(circStream)}
@@ -2709,12 +2729,26 @@ function closeCircleUI(){
 function stopCircle(send){
   if(!circRec){closeCircleUI();return}
   const dur=Math.max(1,Math.round((Date.now()-circT0)/1000));
-  circRec.onstop=()=>{
+  circRec.onstop=async()=>{
     closeCircleUI();
     if(!send||dur<1){circRec=null;return}
-    const blob=new Blob(circChunks,{type:circRec.mimeType||'video/webm'});
+    const blob=new Blob(circChunks,{type:(circRec.mimeType||'video/webm').split(';')[0]});
     circRec=null;
     if(blob.size>MAX_MB*1048576){toast('Кружок тяжелее '+MAX_MB+' МБ — запишите короче');return}
+    /* Пробуем проиграть собственную запись — если телефон не может, честно скажем */
+    try{
+      const tv=document.createElement('video');
+      tv.muted=true;tv.playsInline=true;
+      tv.src=URL.createObjectURL(blob);
+      const okPlay=await new Promise(res=>{
+        const t=setTimeout(()=>res(false),2500);
+        tv.onloadeddata=()=>{clearTimeout(t);res(true)};
+        tv.onerror=()=>{clearTimeout(t);res(false)};
+        try{tv.load()}catch(e){}
+      });
+      URL.revokeObjectURL(tv.src);
+      if(!okPlay)toast('Ваш телефон не показывает свои кружки — у собеседника может играть, либо откроется во внешнем плеере');
+    }catch(e){}
     const fr=new FileReader();
     fr.onload=async()=>{
       try{
