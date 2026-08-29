@@ -1125,8 +1125,28 @@ async function sendMail(to, code) {
       if (/пароль отклонён|RCPT|MAIL FROM/.test(lastErr)) break; /* не сеть — пробовать другой порт бессмысленно */
     }
   }
-  return { sent: false, reason: 'Не удалось отправить письмо: ' + lastErr };
+  const tried = [];
+  if (MP_KEY) tried.push('Mailopost');
+  if (RS_KEY) tried.push('Rusender');
+  if (SP_ID && SP_SECRET) tried.push('SendPulse');
+  if (MAIL_HOOK_URL) tried.push('мостик');
+  if (BREVO_KEY) tried.push('Brevo');
+  if (MAIL_USER && MAIL_PASS) tried.push('SMTP');
+  return { sent: false, reason: lastErr + ' (пробовали: ' + (tried.join(', ') || 'ничего не настроено') + ')' };
 }
+
+route('GET', '/api/mailcheck', async (req, res) => {
+  send(res, 200, {
+    mailopost: !!MP_KEY,
+    rusender: !!RS_KEY,
+    sendpulse: !!(SP_ID && SP_SECRET),
+    hook: !!MAIL_HOOK_URL,
+    brevo: !!BREVO_KEY,
+    smtp: !!(MAIL_USER && MAIL_PASS),
+    from: MAIL_USER || null,
+    build: 'rusender-2'
+  });
+});
 
 route('POST', '/api/auth/email/request', async (req, res, body) => {
   const email = normEmail(body.email);
@@ -2370,6 +2390,7 @@ route('GET', '/api/health', async (req, res) => {
 const OPEN_ROUTES = [
   'POST /api/auth/request',
   'POST /api/auth/verify',
+  'GET /api/mailcheck',
   'POST /api/auth/email/request',
   'POST /api/auth/email/verify',
   'POST /api/auth/telegram/start',
@@ -2489,6 +2510,15 @@ setInterval(() => {
 load().then(() => {
   server.listen(PORT, () => {
     console.log('Newchat-сервер запущен на порту ' + PORT);
+  const ways = [];
+  if (MP_KEY) ways.push('Mailopost');
+  if (RS_KEY) ways.push('Rusender');
+  if (SP_ID && SP_SECRET) ways.push('SendPulse');
+  if (MAIL_HOOK_URL) ways.push('мостик Google');
+  if (BREVO_KEY) ways.push('Brevo');
+  if (MAIL_USER && MAIL_PASS) ways.push('SMTP ' + MAIL_HOST);
+  console.log('Почта: ' + (ways.length ? 'пути отправки — ' + ways.join(', ') : 'НЕ НАСТРОЕНА, коды идут на экран'));
+  console.log('Почта: отправитель — ' + (MAIL_USER || 'не задан (MAIL_USER)'));
     startTelegram();
   });
 });
