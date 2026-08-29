@@ -156,7 +156,18 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
   border-radius:7px;padding:1px 6px;font-size:.6rem;font-weight:800;letter-spacing:.4px;vertical-align:2px;
   box-shadow:0 2px 6px rgba(232,137,11,.35)}
 .msg video{max-width:100%;border-radius:12px;display:block;margin-bottom:4px}
-.msg video.circle{width:200px;height:200px;border-radius:50%;object-fit:cover;box-shadow:0 8px 24px rgba(31,32,64,.25)}
+.vwrap{position:relative;overflow:hidden;border-radius:14px;min-width:210px;min-height:140px;
+  background:linear-gradient(135deg,#8B7CFF,#5B4BD4);cursor:pointer;margin-bottom:4px}
+.vwrap.circ{width:210px;height:210px;border-radius:50%;min-width:0;min-height:0;box-shadow:0 8px 24px rgba(31,32,64,.25)}
+.vwrap video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .25s;border-radius:0;margin:0}
+.vwrap.ready video{opacity:1}
+.vplay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:2;pointer-events:none}
+.vplay i{width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;
+  box-shadow:0 6px 18px rgba(20,16,60,.3);transition:transform .18s}
+.vwrap:active .vplay i{transform:scale(.9)}
+.vwrap.playing .vplay{display:none}
+.vdur{position:absolute;left:10px;bottom:8px;z-index:2;background:rgba(15,14,40,.55);color:#fff;font-size:.68rem;
+  padding:2px 8px;border-radius:9px;font-variant-numeric:tabular-nums}
 /* Кружок и одинокий эмодзи живут без пузыря — как в телеге */
 .msg.bare{background:none!important;box-shadow:none!important;border:none!important;padding:0!important;backdrop-filter:none!important}
 .msg.bare .t{color:var(--ink-2)!important;background:rgba(255,255,255,.75);border-radius:8px;padding:1px 6px;margin-top:4px;display:inline-block}
@@ -1378,7 +1389,7 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2152,25 +2163,38 @@ function dataToBlobUrl(data){
   for(let k=0;k<len;k++)arr[k]=bin.charCodeAt(k);
   return URL.createObjectURL(new Blob([arr],{type:mime}));
 }
+function vFail(w,url){
+  /* Телефон не понял кодек — отдаём ролик системному плееру */
+  if(w.dataset.failed)return;
+  w.dataset.failed='1';
+  w.innerHTML='<a href="'+url+'" target="_blank" onclick="event.stopPropagation()" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#fff;text-decoration:none">'+
+    '<i style="width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" fill="#5B4BD4" width="24" height="24"><path d="M8 5.5v13l11-6.5z"/></svg></i>'+
+    '<b style="font-size:.78rem">Открыть видео</b></a>';
+}
 function attachVideos(c){
-  document.querySelectorAll('#chat-msgs video[data-vid]').forEach(v=>{
-    if(v.src)return;
-    const m=c.msgs.find(x=>x.id===v.dataset.vid);
+  document.querySelectorAll('#chat-msgs .vwrap[data-vid]').forEach(w=>{
+    const v=w.querySelector('video');
+    if(!v||v.src)return;
+    const m=c.msgs.find(x=>x.id===w.dataset.vid);
     if(!m||!m.media)return;
     try{
       if(!vidUrls[m.id])vidUrls[m.id]=dataToBlobUrl(m.media.data);
-      v.src=vidUrls[m.id];
-      v.onerror=()=>{
-        /* Формат не поддержан — предлагаем открыть системным плеером */
-        const a=document.createElement('a');
-        a.href=vidUrls[m.id];
-        a.textContent='▶ Открыть видео';
-        a.style.cssText='display:inline-block;padding:10px 14px;background:var(--accent);color:#fff;border-radius:12px;font-size:.85rem;text-decoration:none';
-        a.target='_blank';
-        v.replaceWith(a);
-      };
+      const url=vidUrls[m.id];
+      v.src=url;
+      v.onloadeddata=()=>w.classList.add('ready');
+      v.onerror=()=>vFail(w,url);
+      v.onplay=()=>w.classList.add('playing');
+      v.onpause=()=>w.classList.remove('playing');
+      v.onended=()=>{w.classList.remove('playing');v.currentTime=0};
+      /* Декодер молчит слишком долго — тоже считаем отказом */
+      setTimeout(()=>{if(!w.classList.contains('ready')&&!w.dataset.failed)vFail(w,url)},7000);
     }catch(e){}
   });
+}
+function vTap(w){
+  const v=w.querySelector('video');
+  if(!v)return;
+  if(v.paused){v.play().catch(()=>{})}else{v.pause()}
 }
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
@@ -2197,8 +2221,12 @@ function renderMsgs(c){
           '<span style="font-size:.72rem;opacity:.75">'+fmtSize(m.media.size||0)+' · нажмите, чтобы скачать</span></span></div>';
       }
       if(m.media&&(m.media.kind==='video'||m.media.kind==='circle')){
-        /* WebView не проигрывает base64 в src — подставляем blob-ссылку после отрисовки */
-        body+='<video'+(m.media.kind==='circle'?' class="circle"':'')+' controls playsinline preload="metadata" data-vid="'+m.id+'" onclick="event.stopPropagation()"></video>';
+        /* Фиолетовая заглушка с кнопкой play, видео проявляется когда готово — как в телеге */
+        const d=m.media.dur?String(Math.floor(m.media.dur/60))+':'+String(m.media.dur%60).padStart(2,'0'):'';
+        body+='<div class="vwrap'+(m.media.kind==='circle'?' circ':'')+'" data-vid="'+m.id+'" onclick="event.stopPropagation();vTap(this)">'+
+          '<video playsinline preload="metadata"></video>'+
+          '<span class="vplay"><i><svg viewBox="0 0 24 24" fill="#5B4BD4" width="26" height="26"><path d="M8 5.5v13l11-6.5z"/></svg></i></span>'+
+          (d?'<span class="vdur">'+d+'</span>':'')+'</div>';
       }
       const stub=m.media&&(['📷 Фото','🎤 Голосовое сообщение','🎬 Видео','⭕ Видеосообщение'].includes(m.text)||(m.media.kind==='file'&&m.text==='📎 '+m.media.name));
       if(m.text&&!stub)body+=esc(m.text);
@@ -2552,9 +2580,16 @@ async function startCircle(){
   pv.srcObject=circStream;
   document.getElementById('rec-ring').classList.add('on');
 
-  /* mp4 WebView играет надёжнее всего, webm — запасной */
-  const cands=['video/mp4','video/webm;codecs=vp8,opus','video/webm'];
-  const mime=cands.find(t=>{try{return MediaRecorder.isTypeSupported(t)}catch(e){return false}})||'';
+  /* Пишем в кодеке, который этот же телефон точно проигрывает */
+  const probe=document.createElement('video');
+  const cands=['video/mp4','video/webm;codecs=h264,opus','video/webm;codecs=h264','video/webm;codecs=vp8,opus','video/webm'];
+  const mime=cands.find(t=>{
+    try{
+      if(!MediaRecorder.isTypeSupported(t))return false;
+      const base=t.split(';')[0];
+      return probe.canPlayType(base+(t.includes('codecs=')?';codecs="'+t.split('codecs=')[1]+'"':''))!=='';
+    }catch(e){return false}
+  })||cands.find(t=>{try{return MediaRecorder.isTypeSupported(t)}catch(e){return false}})||'';
   try{
     circRec=new MediaRecorder(circStream,mime?{mimeType:mime,videoBitsPerSecond:280000,audioBitsPerSecond:24000}:{});
   }catch(e){circRec=new MediaRecorder(circStream)}
