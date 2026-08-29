@@ -27,7 +27,9 @@ const MAIL_USER = process.env.MAIL_USER || '';
 const MAIL_PASS = process.env.MAIL_PASS || '';
 const MAIL_HOST = process.env.MAIL_HOST || 'smtp.gmail.com';
 const MAIL_PORT = Number(process.env.MAIL_PORT || 465);
-const MAIL_ENABLED = !!(MAIL_USER && MAIL_PASS);
+/* Ключ Brevo: отправка писем по HTTPS. Нужен там, где хостинг режет порты SMTP. */
+const BREVO_KEY = process.env.BREVO_API_KEY || '';
+const MAIL_ENABLED = !!((MAIL_USER && MAIL_PASS) || BREVO_KEY);
 
 /* Telegram-бот для подтверждения номера. Бесплатно и без лимитов. */
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -62,6 +64,12 @@ const SELL_MIN_TRUST = Number(process.env.SELL_MIN_TRUST || 60);
 
 /* Лимит ботов на человека */
 const BOTS_PER_USER = Number(process.env.BOTS_PER_USER || 3);
+
+/* Сколько мегабайт разрешено на одно вложение. Всё хранится в базе:
+   на бесплатном Neon это 500 МБ на всех, поэтому по умолчанию скромно. */
+const MAX_MB = Number(process.env.MAX_UPLOAD_MB || 10);
+const MAX_BYTES = Math.round(MAX_MB * 1.37 * 1024 * 1024);
+const MEDIA_KEEP_DAYS = Number(process.env.MEDIA_KEEP_DAYS || 7);
 
 /* ================= ХРАНИЛИЩЕ ================= */
 
@@ -662,9 +670,9 @@ setInterval(() => {
   let vidCleaned = false;
   for (const c of Object.values(db.chats)) {
     for (const m of c.msgs) {
-      if (m.media && (m.media.kind === 'video' || m.media.kind === 'circle') && now() - m.time > 7 * 86400e3) {
+      if (m.media && ['video', 'circle', 'file'].includes(m.media.kind) && now() - m.time > MEDIA_KEEP_DAYS * 86400e3) {
         m.media = null;
-        m.text = m.text || 'Видео удалено (хранится 7 дней)';
+        m.text = m.text || ('Вложение удалено (хранится ' + MEDIA_KEEP_DAYS + ' дн.)');
         m.expired = true;
         vidCleaned = true;
       }
@@ -728,7 +736,7 @@ function readBody(req) {
     let data = '';
     req.on('data', c => {
       data += c;
-      if (data.length > 6e6) req.destroy();
+      if (data.length > MAX_BYTES * 1.6) req.destroy(); /* явный флуд — рвём */
     });
     req.on('end', () => {
       try { resolve(data ? JSON.parse(data) : {}); }
@@ -897,6 +905,36 @@ function smtpSend(opts) {
   });
 }
 
+function brevoSend(to, subject, html) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const payload = JSON.stringify({
+      sender: { name: 'Newchat', email: MAIL_USER || 'noreply@newchat.app' },
+      to: [{ email: to }],
+      subject, htmlContent: html
+    });
+    const req = https.request({
+      hostname: 'api.brevo.com', path: '/v3/smtp/email', method: 'POST',
+      headers: {
+        'api-key': BREVO_KEY,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload)
+      }
+    }, res => {
+      let body = '';
+      res.on('data', d => body += d);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve(true);
+        else reject(new Error('Brevo ' + res.statusCode + ': ' + body.slice(0, 200)));
+      });
+    });
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Brevo: таймаут')); });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function sendMail(to, code) {
   if (!MAIL_ENABLED) return { sent: false, reason: 'not_configured' };
   const html = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:0 auto;padding:28px 24px;background:#EEF0F5;border-radius:18px">' +
@@ -918,6 +956,17 @@ async function sendMail(to, code) {
     '',
     Buffer.from(html, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n')
   ].join('\r\n');
+
+  /* Сначала HTTPS-путь: его хостинги не блокируют */
+  if (BREVO_KEY) {
+    try {
+      await brevoSend(to, code + ' — код входа в Newchat', html);
+      return { sent: true };
+    } catch (e) {
+      console.error('Почта (Brevo):', e.message);
+      if (!MAIL_USER || !MAIL_PASS) return { sent: false, reason: e.message };
+    }
+  }
 
   /* Многие хостинги режут 465 — если не вышло, пробуем 587 через STARTTLS */
   const ports = MAIL_PORT === 465 ? [465, 587] : [MAIL_PORT];
@@ -1192,13 +1241,19 @@ function validMedia(media) {
     return { kind: 'voice', data, dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1))) };
   }
   if (media.kind === 'video' || media.kind === 'circle') {
-    /* Видео тяжёлое: держим короткое и лёгкое, иначе бесплатная база кончится за неделю */
-    if (!/^data:video\/(webm|mp4|quicktime)(;codecs=[a-z0-9,.\s]+)?;base64,/.test(data)) return null;
-    if (data.length > 3600000) return null;
+    if (!/^data:video\/[a-z0-9.+-]+(;codecs=[a-z0-9,.\s"']+)?;base64,/i.test(data)) return null;
+    if (data.length > MAX_BYTES) return null;
     return {
       kind: media.kind, data,
-      dur: Math.min(60, Math.max(1, Math.round(Number(media.dur) || 1)))
+      dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1)))
     };
+  }
+  if (media.kind === 'file') {
+    /* Любой файл: архив, документ, что угодно */
+    if (!/^data:[a-z0-9.+\/-]*;base64,/i.test(data)) return null;
+    if (data.length > MAX_BYTES) return null;
+    const name = String(media.name || 'файл').replace(/[\r\n]/g, '').slice(0, 80);
+    return { kind: 'file', data, name, size: Math.round(data.length * 0.75) };
   }
   return null;
 }
@@ -1209,8 +1264,8 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   const media = validMedia(body.media);
 
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (body.media && !media) return send(res, 400, { error: 'Файл не подходит или больше ' + MAX_MB + ' МБ' });
   if (!text && !media) return send(res, 400, { error: 'Пустое сообщение' });
-  if (body.media && !media) return send(res, 400, { error: 'Файл не подходит: фото до 500 КБ, голос до 5 минут, видео до 60 секунд и 2,5 МБ' });
   if (chat.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
   if (chat.type === 'channel' && chat.owner !== user.id) {
     return send(res, 403, { error: 'В канале пишет только владелец' });
@@ -1226,7 +1281,8 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   /* Старые версии приложения не умеют показывать медиа — им достанется понятная надпись */
   if (media && !text) outText = media.kind === 'photo' ? '📷 Фото'
     : media.kind === 'voice' ? '🎤 Голосовое сообщение'
-    : media.kind === 'circle' ? '⭕ Видеосообщение' : '🎬 Видео';
+    : media.kind === 'circle' ? '⭕ Видеосообщение'
+    : media.kind === 'file' ? ('📎 ' + media.name) : '🎬 Видео';
   const msg = { id: uid(), from: user.id, text: outText, time: now(), deleted: false };
   if (media) msg.media = media;
 
@@ -1547,6 +1603,70 @@ route('POST', '/api/admin/deals', async (req, res, body) => {
 /* ---------- Панель разработчика ---------- */
 /* Доступна только аккаунтам из DEV_USERNAMES (переменная на Render) */
 
+route('POST', '/api/dev/stats', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const users = Object.values(db.users).filter(u => !u.isBot);
+  const day = now() - 86400e3;
+  let msgs = 0, mediaBytes = 0;
+  for (const c of Object.values(db.chats)) {
+    msgs += c.msgs.length;
+    for (const m of c.msgs) if (m.media && m.media.data) mediaBytes += m.media.data.length;
+  }
+  send(res, 200, {
+    stats: {
+      users: users.length,
+      online: users.filter(u => isOnline(u.id)).length,
+      activeDay: users.filter(u => (u.lastSeen || 0) > day).length,
+      newDay: users.filter(u => (u.createdAt || 0) > day).length,
+      premium: users.filter(u => isPremium(u)).length,
+      banned: users.filter(u => u.banned).length,
+      bots: Object.values(db.users).filter(u => u.isBot).length,
+      chats: Object.keys(db.chats).length,
+      channels: Object.values(db.chats).filter(c => c.type === 'channel').length,
+      msgs,
+      deals: Object.keys(db.deals).length,
+      disputes: Object.values(db.deals).filter(d => d.status === 'dispute').length,
+      lots: Object.values(db.usernames).filter(v => v.forSale).length,
+      stories: (db.stories || []).length,
+      reports: db.reports.length,
+      mediaMb: Math.round(mediaBytes / 1048576 * 10) / 10,
+      dbMb: Math.round(JSON.stringify(db).length / 1048576 * 10) / 10
+    }
+  });
+});
+
+route('POST', '/api/dev/purge', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  let freed = 0, n = 0;
+  for (const c of Object.values(db.chats)) {
+    for (const m of c.msgs) {
+      if (m.media && m.media.data && ['video', 'circle', 'file'].includes(m.media.kind)) {
+        freed += m.media.data.length; n++;
+        m.media = null;
+        m.text = m.text || 'Вложение удалено администратором';
+      }
+    }
+  }
+  save();
+  send(res, 200, { freedMb: Math.round(freed / 1048576 * 10) / 10, count: n });
+});
+
+route('POST', '/api/dev/gift', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const uname = normUsername(body.username);
+  const gift = normUsername(body.gift);
+  const rec = db.usernames[uname];
+  const target = rec && db.users[rec.owner];
+  if (!target) return send(res, 404, { error: 'Пользователь не найден' });
+  if (!gift || gift.length < 5) return send(res, 400, { error: 'Юзернейм от 5 символов' });
+  if (db.usernames[gift]) return send(res, 400, { error: 'Этот юзернейм занят' });
+  db.usernames[gift] = { owner: target.id, main: false, forSale: false, price: 0 };
+  save();
+  serviceMessage(target.id, 'Команда Newchat подарила вам юзернейм @' + gift + '.');
+  push(target.id, { type: 'state' });
+  send(res, 200, { done: ['подарен @' + gift] });
+});
+
 route('POST', '/api/dev/broadcast', async (req, res, body, user) => {
   if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
   const text = String(body.text || '').trim().slice(0, 1000);
@@ -1618,13 +1738,16 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
 route('POST', '/api/stories/post', async (req, res, body, user) => {
   if (!isPremium(user)) return send(res, 403, { error: 'Сторисы — функция премиума. Пригласите ' + PREMIUM.invites + ' друзей!' });
   const photo = String(body.photo || '');
-  if (!/^data:image\/(jpeg|png|webp);base64,/.test(photo) || photo.length > 700000) {
+  const isVideo = /^data:video\//i.test(photo);
+  if (isVideo) {
+    if (photo.length > MAX_BYTES) return send(res, 400, { error: 'Видео больше ' + MAX_MB + ' МБ' });
+  } else if (!/^data:image\/(jpeg|png|webp);base64,/.test(photo) || photo.length > 900000) {
     return send(res, 400, { error: 'Фото не подходит' });
   }
   const mine = db.stories.filter(st => st.user === user.id && now() - st.time < 86400e3);
   if (mine.length >= 10) return send(res, 400, { error: 'Не больше 10 историй в сутки' });
 
-  db.stories.push({ id: uid(), user: user.id, photo, text: String(body.text || '').slice(0, 100), time: now() });
+  db.stories.push({ id: uid(), user: user.id, photo, video: isVideo, text: String(body.text || '').slice(0, 100), time: now() });
   save();
   send(res, 200, { stories: storiesFeed(user) });
 });
@@ -1638,7 +1761,7 @@ function storiesFeed(user) {
     if (author.anon && author.id !== user.id) continue; /* анонимы не светятся */
     if ((author.blocked || {})[user.id]) continue;
     byUser[st.user] = byUser[st.user] || { user: publicUser(author), mine: st.user === user.id, items: [] };
-    byUser[st.user].items.push({ id: st.id, photo: st.photo, text: st.text, time: st.time });
+    byUser[st.user].items.push({ id: st.id, photo: st.photo, video: !!st.video, text: st.text, time: st.time });
   }
   return Object.values(byUser).sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0));
 }
@@ -2028,7 +2151,8 @@ route('GET', '/api/config', async (req, res) => {
     botName: TG_BOT_NAME,
     sms: SMS_ENABLED,
     mail: MAIL_ENABLED,
-    videoDays: 7,
+    maxMb: MAX_MB,
+    videoDays: MEDIA_KEEP_DAYS,
     deal: { payHours: DEAL.payHours, confirmDays: DEAL.confirmDays }
   });
 });
