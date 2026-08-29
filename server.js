@@ -798,59 +798,85 @@ function validEmail(v) {
 function smtpSend(opts) {
   return new Promise((resolve, reject) => {
     const tls = require('tls');
-    const sock = tls.connect({ host: opts.host, port: opts.port, servername: opts.host });
-    sock.setEncoding('utf8');
-    sock.setTimeout(20000);
+    const net = require('net');
+    const starttls = opts.port !== 465;
+
+    let sock = starttls
+      ? net.connect({ host: opts.host, port: opts.port })
+      : tls.connect({ host: opts.host, port: opts.port, servername: opts.host });
 
     let buf = '';
-    const queue = [];        /* ожидания ответов по очереди */
+    const queue = [];      /* кто ждёт ответа */
+    const pending = [];    /* ответы, пришедшие раньше ожидания */
     let done = false;
 
     function fail(e) {
       if (done) return;
       done = true;
       try { sock.destroy(); } catch (x) {}
-      reject(e instanceof Error ? e : new Error(String(e)));
+      const msg = (e && (e.message || e.code)) || String(e) || 'соединение закрыто';
+      reject(new Error(msg));
     }
-
-    /* Разбираем поток на законченные ответы SMTP (учитывая многострочные) */
-    sock.on('data', chunk => {
+    function onData(chunk) {
       buf += chunk;
       let nl;
       while ((nl = buf.indexOf('\r\n')) !== -1) {
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 2);
-        if (/^\d{3}-/.test(line)) continue;      /* продолжение — ждём финальную строку */
-        const code = line.slice(0, 3);
-        const waiter = queue.shift();
-        if (waiter) waiter(code, line);
+        if (/^\d{3}-/.test(line)) continue;
+        const answer = { code: line.slice(0, 3), line };
+        const w = queue.shift();
+        if (w) w(answer); else pending.push(answer);
       }
-    });
-
+    }
+    function bind(s) {
+      s.setEncoding('utf8');
+      s.setTimeout(20000);
+      s.on('data', onData);
+      s.on('timeout', () => fail(new Error('таймаут — порт ' + opts.port + ' закрыт хостингом')));
+      s.on('error', fail);
+    }
     function reply() {
-      return new Promise(res => queue.push((code, line) => res({ code, line })));
+      if (pending.length) return Promise.resolve(pending.shift());
+      return new Promise(r => queue.push(r));
     }
     async function expect(codes, what) {
       const r = await reply();
-      if (!codes.includes(r.code)) throw new Error('SMTP ' + what + ' → ' + r.line);
+      if (!codes.includes(r.code)) throw new Error(what + ': ' + r.line);
       return r;
     }
-    function say(text) { sock.write(text + '\r\n'); }
+    function say(t) { sock.write(t + '\r\n'); }
 
-    sock.on('timeout', () => fail(new Error('SMTP: таймаут')));
-    sock.on('error', fail);
+    bind(sock);
 
-    sock.on('secureConnect', async () => {
+    const start = async () => {
       try {
         await expect(['220'], 'приветствие');
         say('EHLO newchat');
         await expect(['250'], 'EHLO');
+
+        if (starttls) {
+          say('STARTTLS');
+          await expect(['220'], 'STARTTLS');
+          const plain = sock;
+          plain.removeAllListeners('data');
+          plain.removeAllListeners('error');
+          plain.removeAllListeners('timeout');
+          buf = '';
+          pending.length = 0;
+          sock = tls.connect({ socket: plain, servername: opts.host });
+          bind(sock);
+          await new Promise((res, rej) => { sock.once('secureConnect', res); sock.once('error', rej); });
+          say('EHLO newchat');
+          await expect(['250'], 'EHLO после STARTTLS');
+        }
+
         say('AUTH LOGIN');
         await expect(['334'], 'AUTH');
         say(Buffer.from(opts.user).toString('base64'));
         await expect(['334'], 'логин');
         say(Buffer.from(opts.pass).toString('base64'));
-        await expect(['235'], 'пароль (проверьте пароль приложения)');
+        await expect(['235'], 'пароль отклонён (нужен пароль приложения, 16 символов без пробелов)');
         say('MAIL FROM:<' + opts.user + '>');
         await expect(['250'], 'MAIL FROM');
         say('RCPT TO:<' + opts.to + '>');
@@ -858,15 +884,16 @@ function smtpSend(opts) {
         say('DATA');
         await expect(['354'], 'DATA');
         sock.write(opts.message + '\r\n.\r\n');
-        await expect(['250'], 'отправка письма');
+        await expect(['250'], 'отправка');
         say('QUIT');
         done = true;
         sock.end();
         resolve(true);
-      } catch (e) {
-        fail(e);
-      }
-    });
+      } catch (e) { fail(e); }
+    };
+
+    if (starttls) sock.once('connect', start);
+    else sock.once('secureConnect', start);
   });
 }
 
@@ -892,13 +919,21 @@ async function sendMail(to, code) {
     Buffer.from(html, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n')
   ].join('\r\n');
 
-  try {
-    await smtpSend({ host: MAIL_HOST, port: MAIL_PORT, user: MAIL_USER, pass: MAIL_PASS, to, message });
-    return { sent: true };
-  } catch (e) {
-    console.error('Почта:', e.message);
-    return { sent: false, reason: 'Не удалось отправить письмо: ' + e.message };
+  /* Многие хостинги режут 465 — если не вышло, пробуем 587 через STARTTLS */
+  const ports = MAIL_PORT === 465 ? [465, 587] : [MAIL_PORT];
+  let lastErr = '';
+  for (const port of ports) {
+    try {
+      await smtpSend({ host: MAIL_HOST, port, user: MAIL_USER, pass: MAIL_PASS, to, message });
+      if (port !== MAIL_PORT) console.log('Почта: отправлено через порт ' + port);
+      return { sent: true };
+    } catch (e) {
+      lastErr = e.message || 'неизвестная ошибка';
+      console.error('Почта (порт ' + port + '):', lastErr);
+      if (/пароль отклонён|RCPT|MAIL FROM/.test(lastErr)) break; /* не сеть — пробовать другой порт бессмысленно */
+    }
   }
+  return { sent: false, reason: 'Не удалось отправить письмо: ' + lastErr };
 }
 
 route('POST', '/api/auth/email/request', async (req, res, body) => {
