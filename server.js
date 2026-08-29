@@ -22,6 +22,13 @@ const DEV_USERNAMES = (process.env.DEV_USERNAMES || 'shadow')
 const SMSRU_API_ID = process.env.SMSRU_API_ID || '';
 const SMS_ENABLED = !!SMSRU_API_ID;
 
+/* Почта: обычный Gmail-ящик с «паролем приложения». Бесплатно, до 500 писем в сутки. */
+const MAIL_USER = process.env.MAIL_USER || '';
+const MAIL_PASS = process.env.MAIL_PASS || '';
+const MAIL_HOST = process.env.MAIL_HOST || 'smtp.gmail.com';
+const MAIL_PORT = Number(process.env.MAIL_PORT || 465);
+const MAIL_ENABLED = !!(MAIL_USER && MAIL_PASS);
+
 /* Telegram-бот для подтверждения номера. Бесплатно и без лимитов. */
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TG_BOT_NAME = (process.env.TELEGRAM_BOT_USERNAME || '').replace('@', '');
@@ -235,6 +242,7 @@ function publicUser(u) {
     cover: u.cover, ava: u.ava, status: u.status,
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
     bot: !!u.isBot, anon: !!u.anon,
+    phoneOk: !!u.phone,
     trust: u.isBot ? undefined : (u.trust || 0),
     reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
     ageDays: Math.max(0, Math.floor((now() - (u.createdAt || now())) / 86400e3)),
@@ -376,6 +384,8 @@ function fullState(user) {
       slots: slotLimit(user),
       premiumDays: PREMIUM.days,
       anonMode: !!user.anon,
+      email: user.email || '',
+      phoneOk: !!user.phone,
       invites: user.inviteCount || 0,
       invitesNeeded: PREMIUM.invites,
       requisites: user.requisites || null
@@ -491,6 +501,37 @@ async function handleTelegramUpdate(update) {
 
     const session = Object.keys(db.tgSessions)
       .find(s => db.tgSessions[s].chatId === chatId && db.tgSessions[s].status === 'pending');
+
+    /* Привязка телефона к уже существующему аккаунту (вход был по почте) */
+    if (session && db.tgSessions[session].linkFor) {
+      const target = db.users[db.tgSessions[session].linkFor];
+      const phone = normPhone(msg.contact.phone_number);
+      if (!target) {
+        await tg('sendMessage', { chat_id: chatId, text: 'Аккаунт не найден. Откройте приложение заново.', reply_markup: { remove_keyboard: true } });
+        return;
+      }
+      const busy = Object.values(db.users).find(u => u.phone === phone && u.id !== target.id);
+      if (busy) {
+        db.tgSessions[session].status = 'error';
+        db.tgSessions[session].error = 'Этот номер уже привязан к другому аккаунту';
+        save();
+        await tg('sendMessage', { chat_id: chatId, text: '❌ Этот номер уже привязан к другому аккаунту Newchat.', reply_markup: { remove_keyboard: true } });
+        return;
+      }
+      target.phone = phone;
+      target.tgId = msg.from.id;
+      db.tgSessions[session].status = 'ok';
+      db.tgSessions[session].linked = true;
+      save();
+      push(target.id, { type: 'state' });
+      serviceMessage(target.id, 'Телефон подтверждён. Биржа юзернеймов открыта.');
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: '✅ Номер привязан к вашему аккаунту. Биржа открыта — возвращайтесь в приложение.',
+        reply_markup: { remove_keyboard: true }
+      });
+      return;
+    }
 
     if (!session) {
       await tg('sendMessage', {
@@ -617,6 +658,20 @@ function finishDeal(deal, how) {
 
 /* Часовой сделок: отменяет неоплаченные и завершает подтверждённые времени */
 setInterval(() => {
+  /* Видео и кружки старше недели вычищаем — база бесплатная, место не резиновое */
+  let vidCleaned = false;
+  for (const c of Object.values(db.chats)) {
+    for (const m of c.msgs) {
+      if (m.media && (m.media.kind === 'video' || m.media.kind === 'circle') && now() - m.time > 7 * 86400e3) {
+        m.media = null;
+        m.text = m.text || 'Видео удалено (хранится 7 дней)';
+        m.expired = true;
+        vidCleaned = true;
+      }
+    }
+  }
+  if (vidCleaned) save();
+
   /* Автоудаление: помечаем старые сообщения в чатах с таймером */
   let ttlChanged = false;
   for (const c of Object.values(db.chats)) {
@@ -729,6 +784,145 @@ route('POST', '/api/auth/request', async (req, res, body) => {
   /* SMS не подключены — показываем код на экране */
   console.log(`Код для +7${phone}: ${code}`);
   send(res, 200, { ok: true, devCode: code });
+});
+
+function normEmail(v) {
+  return String(v || '').trim().toLowerCase().slice(0, 80);
+}
+function validEmail(v) {
+  return /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(v);
+}
+
+async function sendMail(to, code) {
+  if (!MAIL_ENABLED) return { sent: false, reason: 'not_configured' };
+  try {
+    const nodemailer = require('nodemailer');
+    const tx = nodemailer.createTransport({
+      host: MAIL_HOST, port: MAIL_PORT, secure: MAIL_PORT === 465,
+      auth: { user: MAIL_USER, pass: MAIL_PASS }
+    });
+    await tx.sendMail({
+      from: '"Newchat" <' + MAIL_USER + '>',
+      to,
+      subject: code + ' — код входа в Newchat',
+      text: 'Ваш код для входа в Newchat: ' + code + '\nКод действует 10 минут. Если вы не запрашивали вход — просто удалите это письмо.',
+      html: '<div style="font-family:Arial,Helvetica,sans-serif;max-width:420px;margin:0 auto;padding:28px 24px;background:#EEF0F5;border-radius:18px">' +
+        '<div style="text-align:center;font-size:22px;font-weight:800;color:#17181D;margin-bottom:6px">Newchat</div>' +
+        '<div style="text-align:center;font-size:13px;color:#787A86;margin-bottom:22px">Мессенджер, где скамеры отвечают по закону</div>' +
+        '<div style="background:#fff;border-radius:14px;padding:22px;text-align:center">' +
+        '<div style="font-size:13px;color:#787A86;margin-bottom:10px">Ваш код для входа</div>' +
+        '<div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#6C5CE7">' + code + '</div>' +
+        '<div style="font-size:12px;color:#787A86;margin-top:12px">Действует 10 минут</div></div>' +
+        '<div style="font-size:11px;color:#9A9CA8;text-align:center;margin-top:18px">Если вы не запрашивали вход, просто удалите это письмо.</div></div>'
+    });
+    return { sent: true };
+  } catch (e) {
+    console.error('Почта:', e.message);
+    return { sent: false, reason: 'Не удалось отправить письмо' };
+  }
+}
+
+route('POST', '/api/auth/email/request', async (req, res, body) => {
+  const email = normEmail(body.email);
+  if (!validEmail(email)) return send(res, 400, { error: 'Проверьте адрес почты' });
+
+  const key = 'mail:' + email;
+  const prev = db.codes[key];
+  if (prev && prev.sentAt && now() - prev.sentAt < 60e3) {
+    return send(res, 429, { error: 'Код уже отправлен, подождите минуту' });
+  }
+  const hourAgo = now() - 3600e3;
+  const recent = (prev && prev.log ? prev.log : []).filter(t => t > hourAgo);
+  if (recent.length >= 5) return send(res, 429, { error: 'Слишком много запросов. Попробуйте через час.' });
+
+  const code = String(Math.floor(10000 + Math.random() * 90000));
+  db.codes[key] = { code, expires: now() + 10 * 60e3, sentAt: now(), attempts: 0, log: recent.concat(now()) };
+  save();
+
+  if (MAIL_ENABLED) {
+    const r = await sendMail(email, code);
+    if (!r.sent) {
+      delete db.codes[key];
+      save();
+      return send(res, 502, { error: r.reason || 'Не удалось отправить письмо' });
+    }
+    return send(res, 200, { ok: true });
+  }
+  console.log(`Код для ${email}: ${code}`);
+  send(res, 200, { ok: true, devCode: code });
+});
+
+route('POST', '/api/auth/email/verify', async (req, res, body) => {
+  const email = normEmail(body.email);
+  const code = String(body.code || '').replace(/\D/g, '');
+  const key = 'mail:' + email;
+  const rec = db.codes[key];
+
+  if (!rec || rec.expires < now()) return send(res, 400, { error: 'Код истёк, запросите новый' });
+  rec.attempts = (rec.attempts || 0) + 1;
+  if (rec.attempts > 5) {
+    delete db.codes[key];
+    save();
+    return send(res, 429, { error: 'Слишком много попыток. Запросите новый код.' });
+  }
+  if (rec.code !== code) {
+    save();
+    return send(res, 400, { error: 'Неверный код' });
+  }
+  delete db.codes[key];
+
+  let user = Object.values(db.users).find(u => u.email === email);
+  const token = crypto.randomBytes(24).toString('hex');
+  if (user) {
+    const mine = Object.entries(db.tokens).filter(([, id]) => id === user.id);
+    while (mine.length >= 5) delete db.tokens[mine.shift()[0]];
+  }
+  if (!user) {
+    user = {
+      id: uid(), email, phone: '', name: '', username: '',
+      cover: 0, ava: 0, status: '', trust: 100, createdAt: now()
+    };
+    db.users[user.id] = user;
+  }
+  db.tokens[token] = user.id;
+  save();
+
+  send(res, 200, {
+    token,
+    needsSetup: !user.username,
+    state: user.username ? fullState(user) : null
+  });
+});
+
+route('POST', '/api/profile/phone/start', async (req, res, body, user) => {
+  if (!TG_ENABLED) return send(res, 400, { error: 'Привязка через Telegram не настроена' });
+  if (user.phone) return send(res, 400, { error: 'Телефон уже привязан' });
+
+  const cutoff = now() - 15 * 60e3;
+  for (const s of Object.keys(db.tgSessions)) {
+    const r = db.tgSessions[s];
+    if (r.created < cutoff || (r.usedAt && r.usedAt < now() - 2 * 60e3)) delete db.tgSessions[s];
+  }
+
+  const session = crypto.randomBytes(12).toString('hex');
+  db.tgSessions[session] = { created: now(), chatId: null, status: 'pending', token: null, linkFor: user.id };
+  save();
+  send(res, 200, { session, link: `https://t.me/${TG_BOT_NAME}?start=${session}` });
+});
+
+route('POST', '/api/profile/phone/check', async (req, res, body, user) => {
+  const rec = db.tgSessions[String(body.session || '')];
+  if (!rec || rec.linkFor !== user.id) return send(res, 404, { error: 'Сессия не найдена' });
+  if (rec.status === 'error') {
+    const err = rec.error || 'Не удалось привязать';
+    delete db.tgSessions[String(body.session)];
+    save();
+    return send(res, 400, { error: err });
+  }
+  if (rec.status !== 'ok') return send(res, 200, { status: 'pending' });
+  rec.usedAt = now();
+  save();
+  send(res, 200, { status: 'ok', state: fullState(user) });
 });
 
 route('POST', '/api/auth/verify', async (req, res, body) => {
@@ -883,6 +1077,15 @@ function validMedia(media) {
     if (!/^data:audio\/(webm|ogg|mp4|mpeg|wav)(;codecs=[a-z0-9]+)?;base64,/.test(data) || data.length > 3000000) return null;
     return { kind: 'voice', data, dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1))) };
   }
+  if (media.kind === 'video' || media.kind === 'circle') {
+    /* Видео тяжёлое: держим короткое и лёгкое, иначе бесплатная база кончится за неделю */
+    if (!/^data:video\/(webm|mp4|quicktime)(;codecs=[a-z0-9,.\s]+)?;base64,/.test(data)) return null;
+    if (data.length > 3600000) return null;
+    return {
+      kind: media.kind, data,
+      dur: Math.min(60, Math.max(1, Math.round(Number(media.dur) || 1)))
+    };
+  }
   return null;
 }
 
@@ -893,7 +1096,7 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
 
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
   if (!text && !media) return send(res, 400, { error: 'Пустое сообщение' });
-  if (body.media && !media) return send(res, 400, { error: 'Файл не подходит: фото до ~500 КБ, голос до 5 минут' });
+  if (body.media && !media) return send(res, 400, { error: 'Файл не подходит: фото до 500 КБ, голос до 5 минут, видео до 60 секунд и 2,5 МБ' });
   if (chat.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
   if (chat.type === 'channel' && chat.owner !== user.id) {
     return send(res, 403, { error: 'В канале пишет только владелец' });
@@ -907,7 +1110,9 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
 
   let outText = text;
   /* Старые версии приложения не умеют показывать медиа — им достанется понятная надпись */
-  if (media && !text) outText = media.kind === 'photo' ? '📷 Фото' : '🎤 Голосовое сообщение';
+  if (media && !text) outText = media.kind === 'photo' ? '📷 Фото'
+    : media.kind === 'voice' ? '🎤 Голосовое сообщение'
+    : media.kind === 'circle' ? '⭕ Видеосообщение' : '🎬 Видео';
   const msg = { id: uid(), from: user.id, text: outText, time: now(), deleted: false };
   if (media) msg.media = media;
 
@@ -1126,6 +1331,7 @@ route('POST', '/api/deals/start', async (req, res, body, user) => {
   const seller = db.users[rec.owner];
   if (!seller || !seller.requisites) return send(res, 400, { error: 'Продавец не указал реквизиты' });
 
+  if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
   const active = Object.values(db.deals).filter(d => d.buyer === user.id && (d.status === 'pay' || d.status === 'paid'));
   if (active.length >= 3) return send(res, 400, { error: 'У вас уже 3 активные сделки' });
 
@@ -1646,6 +1852,7 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
       v.owner === user.id && un !== username && !v.channel && !v.frozen);
     if (!spare) return send(res, 400, { error: 'Это ваш единственный юзернейм — сначала займите запасной, он станет основным' });
   }
+  if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле — так покупатели знают, с кем имеют дело' });
   if ((user.trust || 0) < SELL_MIN_TRUST) return send(res, 400, { error: 'Продавать можно с доверием от ' + SELL_MIN_TRUST + '%' });
   if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты в «Сделках» — их увидит покупатель' });
 
@@ -1706,6 +1913,8 @@ route('GET', '/api/config', async (req, res) => {
     telegram: TG_ENABLED,
     botName: TG_BOT_NAME,
     sms: SMS_ENABLED,
+    mail: MAIL_ENABLED,
+    videoDays: 7,
     deal: { payHours: DEAL.payHours, confirmDays: DEAL.confirmDays }
   });
 });
@@ -1780,6 +1989,8 @@ route('GET', '/api/health', async (req, res) => {
 const OPEN_ROUTES = [
   'POST /api/auth/request',
   'POST /api/auth/verify',
+  'POST /api/auth/email/request',
+  'POST /api/auth/email/verify',
   'POST /api/auth/telegram/start',
   'POST /api/auth/telegram/check',
   'POST /telegram/webhook',

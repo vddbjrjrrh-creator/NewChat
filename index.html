@@ -152,6 +152,15 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
 @media (prefers-reduced-motion: reduce){*{animation-duration:.01s!important;transition-duration:.01s!important}}
 
 /* Галочки и непрочитанные */
+.dev-chip{display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#FFB84D,#E8890B);color:#fff;
+  border-radius:7px;padding:1px 6px;font-size:.6rem;font-weight:800;letter-spacing:.4px;vertical-align:2px;
+  box-shadow:0 2px 6px rgba(232,137,11,.35)}
+.msg video{max-width:100%;border-radius:12px;display:block;margin-bottom:4px}
+.msg video.circle{width:190px;height:190px;border-radius:50%;object-fit:cover;box-shadow:0 6px 20px rgba(31,32,64,.22)}
+.rec-ring{position:fixed;inset:0;z-index:320;background:rgba(10,11,25,.92);display:none;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+.rec-ring.on{display:flex}
+.rec-ring video{width:260px;height:260px;border-radius:50%;object-fit:cover;border:4px solid var(--accent);box-shadow:0 0 0 10px rgba(108,92,231,.2)}
+.rec-timer{color:#fff;font-size:1.1rem;font-weight:700;font-variant-numeric:tabular-nums}
 .badge{background:linear-gradient(135deg,#9788EA,var(--accent));color:#fff;border-radius:11px;min-width:20px;height:20px;
   font-size:.68rem;font-weight:800;display:inline-flex;align-items:center;justify-content:center;padding:0 6px;margin-top:5px;
   box-shadow:0 3px 8px rgba(108,92,231,.4)}
@@ -683,6 +692,11 @@ body{
         Войти через Telegram
       </button>
 
+      <button class="btn ghost" id="mail-btn" onclick="showMail()" style="display:none;margin-top:10px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19" style="vertical-align:-4px;margin-right:8px"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg>
+        Войти по почте
+      </button>
+
       <div class="or" id="auth-or" style="display:none">или по номеру</div>
 
       <div id="phone-block">
@@ -699,6 +713,25 @@ body{
       </div>
 
       <p class="auth-note">Продолжая, вы соглашаетесь с правилами.<br>Жалобы «Докс» и «Скам» передаются в полицию.</p>
+    </div>
+  </div>
+
+  <!-- ВХОД ПО ПОЧТЕ -->
+  <div class="screen onb" id="s-mail">
+    <div>
+      <div class="logo-orb"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg></div>
+      <h2 style="font-size:1.4rem">Вход по почте</h2>
+      <p class="sub">Пришлём код на ваш адрес.<br>Телефон можно привязать позже.</p>
+      <div class="field">
+        <input type="email" placeholder="you@gmail.com" id="auth-mail" autocapitalize="off" inputmode="email">
+      </div>
+      <div class="field-err" id="mail-err">Проверьте адрес</div>
+      <div class="law-note" style="margin-bottom:12px">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+        Биржа юзернеймов откроется после привязки телефона — так покупатели знают, с кем имеют дело.
+      </div>
+      <button class="btn" onclick="mailNext()">Получить код</button>
+      <button class="btn ghost" onclick="show('s-auth')">Назад</button>
     </div>
   </div>
 
@@ -835,6 +868,15 @@ body{
     </div>
   </div>
 
+  <!-- ПРОФИЛЬ СОБЕСЕДНИКА -->
+  <div class="screen" id="s-peer">
+    <div class="hdr">
+      <button class="icon-btn" onclick="go('s-chat');openChat(currentChat)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="22" height="22"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h1 style="font-size:1.1rem">Профиль</h1>
+    </div>
+    <div class="scroll" id="peer-body"></div>
+  </div>
+
   <!-- ПОИСК -->
   <div class="screen" id="s-search">
     <div class="hdr">
@@ -872,16 +914,15 @@ body{
     <div class="composer">
       <label class="icon-btn" for="msg-photo" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></label>
       <input type="file" id="msg-photo" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendPhoto(this)">
+      <label class="icon-btn" for="msg-video" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="M16 10l6-3v10l-6-3"/></svg></label>
+      <input type="file" id="msg-video" accept="video/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendVideo(this)">
       <input placeholder="Сообщение" id="composer-input">
+      <button class="icon-btn" style="flex:none" id="circle-btn" onclick="startCircle()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></button>
       <button class="icon-btn" style="flex:none" id="mic-btn" onclick="toggleRec()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
       <button class="send" onclick="sendMsg()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20"><path d="M4 12l16-7-4 7 4 7-16-7z"/></svg></button>
     </div>
 
     <div class="sheet-veil" id="veil-chat" onclick="closeSheets()"></div>
-
-    <div class="sheet" id="sheet-peer" style="padding:0;overflow:hidden">
-      <div id="peer-body"></div>
-    </div>
 
     <div class="sheet" id="sheet-chatmenu">
       <div class="grip"></div>
@@ -1090,12 +1131,17 @@ body{
           Мои боты<div class="spacer"></div><span class="val" id="p-bots">0 из 3</span>
         </div>
 
-        <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:4px 0 2px" onclick="showErrs()">Newchat · версия 5 · <span id="p-browser"></span></div>
+        <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:4px 0 2px" onclick="showErrs()">Newchat · версия <span id="p-ver"></span> · <span id="p-browser"></span></div>
         <div class="val" style="display:none;text-align:left;color:var(--danger);font-size:.68rem;padding:4px 10px;word-break:break-all" id="p-errs"></div>
         <div class="val" style="text-align:center;color:var(--ink-2);font-size:.72rem;padding:0 0 4px" id="p-caps"></div>
         <div class="pitem glass-card" id="p-admin" style="display:none" onclick="openSheet('sheet-admin')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19 12a7 7 0 01-.1 1.2l2 1.6-2 3.4-2.4-1a7 7 0 01-2 1.2L14 21h-4l-.5-2.6a7 7 0 01-2-1.2l-2.4 1-2-3.4 2-1.6A7 7 0 015 12a7 7 0 01.1-1.2l-2-1.6 2-3.4 2.4 1a7 7 0 012-1.2L10 3h4l.5 2.6a7 7 0 012 1.2l2.4-1 2 3.4-2 1.6c.06.4.1.8.1 1.2z"/></svg>
           Админ-панель<div class="spacer"></div><span class="val" style="color:var(--accent)">dev</span>
+        </div>
+
+        <div class="pitem glass-card" id="p-phone" style="display:none" onclick="startPhoneLink()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="3"/><path d="M11 18h2"/></svg>
+          Привязать телефон<div class="spacer"></div><span class="val" style="color:var(--accent)">открыть биржу</span>
         </div>
 
         <div class="set-row glass-card">
@@ -1234,6 +1280,15 @@ body{
 
   <div class="toast" id="toast"></div>
 <div class="photo-view" id="photo-view" onclick="this.classList.remove('on')"><img id="photo-view-img"></div>
+<div class="rec-ring" id="rec-ring">
+  <video id="rec-preview" autoplay playsinline muted></video>
+  <div class="rec-timer" id="rec-timer">0:00</div>
+  <div style="display:flex;gap:18px">
+    <button class="call-btn red" onclick="stopCircle(false)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="24" height="24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <button class="call-btn green" onclick="stopCircle(true)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" width="24" height="24"><path d="M5 13l4 4 10-10"/></svg></button>
+  </div>
+  <div style="color:#fff;opacity:.7;font-size:.8rem">до 60 секунд</div>
+</div>
 <div class="call-view" id="call-view">
   <video id="call-remote" autoplay playsinline></video>
   <video id="call-local" autoplay playsinline muted></video>
@@ -1305,6 +1360,43 @@ const tokenStore={
 
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
+/* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
+const APP_VERSION = 7;
+
+/* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
+   Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
+async function checkUpdate(){
+  try{
+    const res=await fetch('./index.html?nocache='+Date.now(),{cache:'no-store'});
+    const txt=await res.text();
+    const m=txt.match(/APP_VERSION\s*=\s*(\d+)/);
+    if(!m)return;
+    const fresh=Number(m[1]);
+    if(fresh>APP_VERSION)showUpdateBanner(fresh);
+  }catch(e){}
+}
+function showUpdateBanner(v){
+  if(document.getElementById('upd-banner'))return;
+  const b=document.createElement('div');
+  b.id='upd-banner';
+  b.style.cssText='position:fixed;bottom:calc(88px + env(safe-area-inset-bottom));left:12px;right:12px;z-index:450;background:linear-gradient(135deg,#7E6BF0,#5B4BD4);color:#fff;border-radius:16px;padding:13px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 10px 30px rgba(91,75,212,.45)';
+  b.innerHTML='<div style="flex:1"><b style="font-size:.9rem">Доступно обновление</b><div style="font-size:.76rem;opacity:.85">Версия '+v+' — нажмите, чтобы обновить</div></div>'+
+    '<button style="background:#fff;color:#5B4BD4;border:none;border-radius:11px;padding:8px 14px;font-weight:700;font-size:.82rem;cursor:pointer">Обновить</button>';
+  b.querySelector('button').onclick=applyUpdate;
+  document.body.appendChild(b);
+}
+async function applyUpdate(){
+  try{
+    /* Чистим кэш и служебный воркер, иначе телефон снова покажет старое */
+    if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)))}
+    if(navigator.serviceWorker){
+      const rs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(rs.map(r=>r.unregister()));
+    }
+  }catch(e){}
+  location.replace(location.pathname+'?v='+Date.now());
+}
+
 window.__errs=[];
 window.addEventListener('error',e=>{window.__errs.push((e.message||'ошибка')+' @ '+(e.filename||'').split('/').pop()+':'+e.lineno);if(window.__errs.length>8)window.__errs.shift()});
 window.addEventListener('unhandledrejection',e=>{window.__errs.push('promise: '+((e.reason&&e.reason.message)||e.reason||'?'));if(window.__errs.length>8)window.__errs.shift()});
@@ -1329,6 +1421,10 @@ function colorFor(str){
   return CHAT_COLORS[h];
 }
 /* Кружок собеседника: фото, если есть, иначе цвет с буквой */
+/* Плашка разработчика — видна всем */
+function devChip(u){
+  return (u&&u.dev)?' <span class="dev-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" width="9" height="9"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>DEV</span>':'';
+}
 function avaHtml(peer,extra){
   extra=extra||'';
   const p=peer||{};
@@ -1435,10 +1531,38 @@ async function codeNext(){
   if(c.length<5){err.textContent='Введите 5 цифр кода';err.style.display='block';return}
   err.style.display='none';
   try{
-    const r=await api('/api/auth/verify',{phone:pendingPhone,code:c});
+    const r=pendingMail
+      ? await api('/api/auth/email/verify',{email:pendingMail,code:c})
+      : await api('/api/auth/verify',{phone:pendingPhone,code:c});
     token=r.token;tokenStore.set(token);
     if(r.needsSetup){show('s-setup')}
     else{S=r.state;connectWS();enterApp()}
+  }catch(e){}
+}
+let pendingMail='';
+function showMail(){
+  show('s-mail');
+  document.getElementById('mail-err').style.display='none';
+  document.getElementById('auth-mail').value='';
+}
+async function mailNext(){
+  const m=document.getElementById('auth-mail').value.trim().toLowerCase();
+  const err=document.getElementById('mail-err');
+  if(!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(m)){err.textContent='Проверьте адрес почты';err.style.display='block';return}
+  err.style.display='none';
+  pendingMail=m;pendingPhone='';
+  try{
+    const r=await api('/api/auth/email/request',{email:m});
+    document.getElementById('code-phone').textContent=m;
+    show('s-code');
+    document.getElementById('auth-code').value='';
+    if(r.devCode){
+      document.getElementById('dev-code-hint').style.display='block';
+      document.getElementById('dev-code-value').textContent=r.devCode;
+    }else{
+      document.getElementById('dev-code-hint').style.display='none';
+    }
+    startResendTimer();
   }catch(e){}
 }
 async function finishSetup(){
@@ -1467,7 +1591,7 @@ async function checkServerFresh(){
       /* Сервер отстал от приложения — главная причина «ничего не работает» */
       const b=document.createElement('div');
       b.style.cssText='position:fixed;top:calc(8px + env(safe-area-inset-top));left:8px;right:8px;z-index:500;background:#E4574C;color:#fff;border-radius:14px;padding:12px 14px;font-size:.82rem;box-shadow:0 8px 24px rgba(0,0,0,.3)';
-      b.innerHTML='<b>Сервер устарел!</b> Приложение — версия 5, а на Render старый server.js. Залейте свежие server/server.js и server/package.json в GitHub и дождитесь деплоя на Render. Пока сервер старый — фото, сторисы, реакции и звонки работать не будут.';
+      b.innerHTML='<b>Сервер устарел!</b> Приложение свежее, а на Render старый server.js. Залейте свежие server/server.js и server/package.json в GitHub и дождитесь деплоя на Render. Пока сервер старый — фото, сторисы, реакции и звонки работать не будут.';
       b.onclick=()=>b.remove();
       document.body.appendChild(b);
     }
@@ -1476,6 +1600,9 @@ async function checkServerFresh(){
 function enterApp(){
   go('s-chats');
   checkServerFresh();
+  checkUpdate();
+  setInterval(checkUpdate,10*60e3);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate()});
   if(IS_APP)return; /* приложение само просит разрешения по-андроидски */
   /* Один раз после первого входа просим разрешения — как обычный мессенджер */
   let asked=false;
@@ -1531,6 +1658,9 @@ async function loadConfig(){
     const phone=document.getElementById('phone-block');
     const or=document.getElementById('auth-or');
     const warn=document.getElementById('no-server');
+    const mailBtn=document.getElementById('mail-btn');
+    /* Почта работает и в режиме разработки — код придёт на экран */
+    mailBtn.style.display='block';
 
     if(cfg.telegram){
       tgBtn.style.display='block';
@@ -1696,7 +1826,9 @@ function startResendTimer(){
 }
 async function resendCode(){
   try{
-    const r=await api('/api/auth/request',{phone:pendingPhone});
+    const r=pendingMail
+      ? await api('/api/auth/email/request',{email:pendingMail})
+      : await api('/api/auth/request',{phone:pendingPhone});
     if(r.devCode){
       document.getElementById('dev-code-hint').style.display='block';
       document.getElementById('dev-code-value').textContent=r.devCode;
@@ -1793,11 +1925,12 @@ function renderChats(){
     const av=(c.service?'<div class="ava" style="background:linear-gradient(135deg,#9788EA,#5B4BD4)">N</div>':avaHtml(peer))
       .replace('<div class="ava"','<div class="ava" data-dot="'+(peer.online&&!c.service&&c.type!=='channel'?'1':'')+'"');
     const mut=c.muted?' <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="opacity:.45;vertical-align:-2px"><path d="M9 6l5-3v18l-5-3H5V6h4z"/><path d="M2 2l20 20"/></svg>':'';
-    const prev=last?(last.deleted?'Сообщение удалено':(last.media?(last.media.kind==='photo'?'📷 Фото':'🎤 Голосовое')+(last.text?' · '+esc(last.text).slice(0,40):''):esc(last.text).slice(0,60))):'';
+    const mk=last&&last.media?({photo:'📷 Фото',voice:'🎤 Голосовое',video:'🎬 Видео',circle:'⭕ Видеосообщение'}[last.media.kind]||'Вложение'):'';
+    const prev=last?(last.deleted?'Сообщение удалено':(last.media?mk:esc(last.text).slice(0,60))):'';
     const typing=typingUntil[c.id]&&typingUntil[c.id]>Date.now();
     const badge=c.unread?'<span class="badge">'+(c.unread>99?'99+':c.unread)+'</span>':'';
     return '<div class="chat-item" onclick="openChat(\''+c.id+'\')">'+av+
-      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+kind+mut+'</div>'+
+      '<div class="mid"><div class="name">'+esc(peer.name)+' '+check+devChip(peer)+kind+mut+'</div>'+
       '<div class="prev">'+(typing?'<i style="color:var(--accent)">печатает…</i>':prev)+'</div></div>'+
       '<div class="end"><span class="time">'+(last?fmtTime(last.time):'')+'</span>'+badge+'</div></div>';
   }).join('');
@@ -1824,7 +1957,7 @@ function openChat(id){
   else if(c.service){av.style.background='linear-gradient(135deg,#9788EA,#5B4BD4)';av.textContent='N';}
   else{av.style.background=peer.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(peer.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(peer.username||peer.name));av.textContent=(peer.name||'?')[0].toUpperCase();}
   document.getElementById('chat-name').innerHTML=esc(peer.name)+
-    (peer.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'');
+    (peer.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'')+devChip(peer);
   let sub=c.service?'официальный аккаунт':fmtSeen(peer);
   if(c.type==='channel')sub=(c.subs||1)+' подписчиков'+(c.mine?' · ваш канал':'');
   if(peer.bot)sub='@'+peer.username+' · бот';
@@ -1851,7 +1984,7 @@ function openPeer(){
   if(!c||c.service)return;
   const p=c.peer||{};
   const cover=COVERS[(p.cover||0)%COVERS.length];
-  const avaStyle='display:inline-flex;width:86px;height:86px;font-size:2rem;border:4px solid #fff;box-shadow:0 6px 20px rgba(31,32,64,.18);background:'+
+  const avaStyle='display:inline-flex;width:118px;height:118px;font-size:2.7rem;border:4px solid #fff;box-shadow:0 6px 20px rgba(31,32,64,.18);background:'+
     (p.photo?'url('+p.photo+') center/cover':(p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?'))));
   const avaBig='<div class="ava" style="'+avaStyle+'">'+(p.photo?'':esc((p.name||'?')[0].toUpperCase()))+'</div>';
   const check=p.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
@@ -1870,10 +2003,11 @@ function openPeer(){
     trustRow='<div style="padding:0 22px 4px"><div style="display:flex;justify-content:space-between;font-size:.76rem;color:var(--ink-2);margin-bottom:5px"><span>Батарейка доверия</span><b style="color:'+(p.trust>=70?'var(--trust)':(p.trust>=40?'var(--gold)':'var(--danger)'))+'">'+p.trust+'%</b></div>'+
     '<div style="height:7px;border-radius:4px;background:rgba(31,32,64,.08)"><div style="height:100%;width:'+p.trust+'%;border-radius:4px;background:'+(p.trust>=70?'var(--trust)':(p.trust>=40?'var(--gold)':'var(--danger)'))+'"></div></div></div>';
   }
+  go('s-peer');
   document.getElementById('peer-body').innerHTML=
-    '<div style="height:96px;background:'+cover+'"></div>'+
-    '<div style="margin-top:-43px;text-align:center">'+avaBig+'</div>'+
-    '<div style="text-align:center;padding:8px 20px 2px"><b style="font-size:1.15rem">'+esc(p.name||'')+'</b>'+check+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
+    '<div style="height:150px;background:'+cover+'"></div>'+
+    '<div style="margin-top:-59px;text-align:center">'+avaBig+'</div>'+
+    '<div style="text-align:center;padding:12px 20px 2px"><b style="font-size:1.4rem">'+esc(p.name||'')+'</b>'+check+devChip(p)+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
     '<div style="text-align:center;color:var(--ink-2);font-size:.82rem;padding-bottom:4px" onclick="copyText(\'@'+esc(p.username||'')+'\');toast(\'Юзернейм скопирован\')">@'+esc(p.username||'')+' · '+esc(sub)+'</div>'+
     dossier+trustRow+
     '<div style="padding:12px 16px 18px;display:flex;flex-direction:column;gap:8px">'+
@@ -1881,7 +2015,6 @@ function openPeer(){
     (c.type==='dm'?'<button class="btn ghost" style="margin:0;color:var(--danger)" onclick="closeSheets();openSheet(\'sheet-report\')">Пожаловаться</button>':'')+
     (c.type==='channel'&&!c.mine?'<button class="btn ghost" style="margin:0" onclick="closeSheets();leaveChannel(\''+c.id+'\')">Отписаться</button>':'')+
     '</div>';
-  openSheet('sheet-peer');
 }
 function openChatMenu(){
   const c=S.chats.find(x=>x.id===currentChat);
@@ -1986,7 +2119,9 @@ function renderMsgs(c){
       if(m.reply)body+='<div style="border-left:2.5px solid '+(m.out?'rgba(255,255,255,.7)':'var(--accent)')+';padding:2px 8px;margin-bottom:5px;border-radius:4px;background:'+(m.out?'rgba(255,255,255,.15)':'var(--accent-soft)')+'"><b style="font-size:.72rem">'+esc(m.reply.name)+'</b><div style="font-size:.76rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.reply.text)+'</div></div>';
       if(m.media&&m.media.kind==='photo')body+='<img src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">';
       if(m.media&&m.media.kind==='voice')body+='<audio controls preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></audio>';
-      const stub=m.media&&(m.text==='📷 Фото'||m.text==='🎤 Голосовое сообщение');
+      if(m.media&&m.media.kind==='video')body+='<video controls playsinline preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></video>';
+      if(m.media&&m.media.kind==='circle')body+='<video class="circle" controls playsinline preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></video>';
+      const stub=m.media&&['📷 Фото','🎤 Голосовое сообщение','🎬 Видео','⭕ Видеосообщение'].includes(m.text);
       if(m.text&&!stub)body+=esc(m.text);
     }
     let reacts='';
@@ -2088,6 +2223,30 @@ function openMsgMenu(id){
     '<input type="hidden" id="msg-src">';
   b.querySelector('#msg-src').value=m.text||(m.media?(m.media.kind==='photo'?'[Фото]':'[Голосовое]'):'');
   openSheet('sheet-msg');
+}
+/* Привязка телефона через Telegram — для тех, кто вошёл по почте */
+let linkSession=null,linkPoll=null;
+async function startPhoneLink(){
+  try{
+    const r=await api('/api/profile/phone/start',{});
+    linkSession=r.session;
+    try{window.open(r.link,'_blank')}catch(e){location.href=r.link}
+    toast('В Telegram нажмите «Старт», затем «Подтвердить номер»');
+    clearInterval(linkPoll);
+    linkPoll=setInterval(checkPhoneLink,2500);
+    setTimeout(()=>clearInterval(linkPoll),15*60e3);
+  }catch(e){}
+}
+async function checkPhoneLink(){
+  if(!linkSession)return;
+  try{
+    const r=await api('/api/profile/phone/check',{session:linkSession});
+    if(r.status==='ok'){
+      clearInterval(linkPoll);linkSession=null;
+      S=r.state;renderProfile();renderMarket();
+      toast('Телефон привязан — биржа открыта');
+    }
+  }catch(e){clearInterval(linkPoll);linkSession=null}
 }
 async function devInfo(){
   const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
@@ -2209,6 +2368,84 @@ async function toggleRec(){
     toast('Запись… тапните ещё раз, чтобы отправить');
   }catch(e){toast(micErrText(e))}
 }
+/* ===== ВИДЕО ===== */
+function sendVideo(input){
+  const f=input.files&&input.files[0];
+  input.value='';
+  if(!f||!currentChat)return;
+  if(f.size>2600000){
+    toast('Видео тяжелее 2,5 МБ. Снимите короче или сожмите — база бесплатная.');
+    return;
+  }
+  toast('Отправляем видео…');
+  const fr=new FileReader();
+  fr.onload=async()=>{
+    try{
+      const r=await api('/api/messages/send',{chatId:currentChat,media:{kind:'video',data:fr.result,dur:15}});
+      const c=S.chats.find(x=>x.id===currentChat);
+      c.msgs.push(r.message);renderMsgs(c);
+    }catch(e){}
+  };
+  fr.readAsDataURL(f);
+}
+
+/* ===== КРУЖКИ ===== */
+let circRec=null,circStream=null,circChunks=[],circT0=0,circTimer=null;
+async function startCircle(){
+  if(!navigator.mediaDevices||!window.MediaRecorder){toast('Браузер не умеет записывать видео');return}
+  try{
+    circStream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'user',width:{ideal:320},height:{ideal:320},frameRate:{ideal:20}},
+      audio:true
+    });
+  }catch(e){toast(micErrText(e));return}
+  const pv=document.getElementById('rec-preview');
+  pv.srcObject=circStream;
+  document.getElementById('rec-ring').classList.add('on');
+
+  const mime=MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')?'video/webm;codecs=vp8,opus'
+    :(MediaRecorder.isTypeSupported('video/webm')?'video/webm':'');
+  try{
+    circRec=new MediaRecorder(circStream,mime?{mimeType:mime,videoBitsPerSecond:280000,audioBitsPerSecond:24000}:{});
+  }catch(e){circRec=new MediaRecorder(circStream)}
+  circChunks=[];circT0=Date.now();
+  circRec.ondataavailable=e=>{if(e.data&&e.data.size)circChunks.push(e.data)};
+  circRec.start();
+  circTimer=setInterval(()=>{
+    const t=Math.floor((Date.now()-circT0)/1000);
+    document.getElementById('rec-timer').textContent=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+    if(t>=60)stopCircle(true);
+  },250);
+}
+function closeCircleUI(){
+  clearInterval(circTimer);
+  document.getElementById('rec-ring').classList.remove('on');
+  document.getElementById('rec-preview').srcObject=null;
+  try{if(circStream)circStream.getTracks().forEach(t=>t.stop())}catch(e){}
+  circStream=null;
+}
+function stopCircle(send){
+  if(!circRec){closeCircleUI();return}
+  const dur=Math.max(1,Math.round((Date.now()-circT0)/1000));
+  circRec.onstop=()=>{
+    closeCircleUI();
+    if(!send||dur<1){circRec=null;return}
+    const blob=new Blob(circChunks,{type:circRec.mimeType||'video/webm'});
+    circRec=null;
+    if(blob.size>2600000){toast('Кружок вышел тяжёлым — запишите короче');return}
+    const fr=new FileReader();
+    fr.onload=async()=>{
+      try{
+        const r=await api('/api/messages/send',{chatId:currentChat,media:{kind:'circle',data:fr.result,dur}});
+        const c=S.chats.find(x=>x.id===currentChat);
+        c.msgs.push(r.message);renderMsgs(c);
+      }catch(e){}
+    };
+    fr.readAsDataURL(blob);
+  };
+  try{circRec.stop()}catch(e){closeCircleUI();circRec=null}
+}
+
 /* WAV-запись: работает даже там, где нет MediaRecorder */
 async function startWavRec(btn){
   let stream;
@@ -2475,7 +2712,7 @@ async function doSearch(){
           '<div class="end"><span class="val" style="color:var(--accent)">'+(it.member?'открыть':'подписаться')+'</span></div></div>';
       }
       return '<div class="chat-item" onclick="chatWith(\''+it.id+'\')">'+avaHtml(it)+
-        '<div class="mid"><div class="name">'+esc(it.name)+(it.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'')+(x.kind==='bot'?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">бот</span>':'')+'</div>'+
+        '<div class="mid"><div class="name">'+esc(it.name)+(it.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'')+devChip(it)+(x.kind==='bot'?' <span class="val" style="font-size:.68rem;color:var(--ink-2)">бот</span>':'')+'</div>'+
         '<div class="prev">@'+esc(it.username)+'</div></div></div>';
     }).join('');
   }catch(e){}
@@ -3198,7 +3435,7 @@ function renderProfile(){
   if(u.photo){pa.style.background='url('+u.photo+') center/cover';document.getElementById('p-initial').textContent='';}
   else{pa.style.background=AVAS[u.ava||0];document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();}
   document.getElementById('p-status').textContent=u.status||'';
-  document.getElementById('p-name').textContent=u.name;
+  document.getElementById('p-name').innerHTML=esc(u.name)+devChip(u);
   const ph=u.phone?('+7 '+u.phone.slice(0,3)+' •••-••-'+u.phone.slice(-2)):'';
   document.getElementById('p-handle').textContent='@'+u.username+' · '+ph;
   document.getElementById('p-vcheck').style.display=u.verified?'inline-flex':'none';
@@ -3220,6 +3457,7 @@ function renderProfile(){
   renderDeco();
   renderSettings();
   document.getElementById('p-admin').style.display=u.dev?'flex':'none';
+  document.getElementById('p-phone').style.display=u.phoneOk?'none':'flex';
   renderDiag();
 }
 /* Какой браузер открыл приложение и что он умеет — видно прямо в профиле */
@@ -3229,6 +3467,7 @@ function showErrs(){
   el.textContent=window.__errs.length?window.__errs.join('\n'):'Ошибок не поймано — значит, дело не в приложении.';
 }
 function renderDiag(){
+  document.getElementById('p-ver').textContent=APP_VERSION;
   const ua=navigator.userAgent;
   let br='другой браузер';
   if(IS_APP)br='приложение Newchat';
