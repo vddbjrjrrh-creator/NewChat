@@ -928,15 +928,12 @@ body{
       <button class="icon-btn" onclick="clearReply()" style="width:30px;height:30px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="17" height="17"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="composer">
-      <label class="icon-btn" for="msg-photo" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></label>
-      <input type="file" id="msg-photo" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendPhoto(this)">
+      <label class="icon-btn" for="msg-photo" style="flex:none;cursor:pointer" id="media-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></label>
+      <input type="file" id="msg-photo" accept="image/*,video/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendMedia(this)">
       <label class="icon-btn" for="msg-file" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M21 12.5l-8.5 8.5a5 5 0 01-7-7l9-9a3.5 3.5 0 015 5l-9 9a2 2 0 01-3-3l8-8"/></svg></label>
       <input type="file" id="msg-file" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendFile(this)">
-      <label class="icon-btn" for="msg-video" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="2" y="6" width="14" height="12" rx="3"/><path d="M16 10l6-3v10l-6-3"/></svg></label>
-      <input type="file" id="msg-video" accept="video/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendVideo(this)">
       <input placeholder="Сообщение" id="composer-input">
-      <button class="icon-btn" style="flex:none" id="circle-btn" onclick="startCircle()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg></button>
-      <button class="icon-btn" style="flex:none" id="mic-btn" onclick="toggleRec()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
+      <button class="icon-btn" style="flex:none" id="mic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
       <button class="send" onclick="sendMsg()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20"><path d="M4 12l16-7-4 7 4 7-16-7z"/></svg></button>
     </div>
 
@@ -1389,7 +1386,7 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2181,20 +2178,29 @@ function attachVideos(c){
       if(!vidUrls[m.id])vidUrls[m.id]=dataToBlobUrl(m.media.data);
       const url=vidUrls[m.id];
       v.src=url;
-      v.onloadeddata=()=>w.classList.add('ready');
+      const ready=()=>w.classList.add('ready');
+      v.onloadeddata=ready;
+      v.oncanplay=ready;
+      v.onplaying=()=>{ready();w.classList.add('playing');v.muted=false};
       v.onerror=()=>vFail(w,url);
-      v.onplay=()=>w.classList.add('playing');
       v.onpause=()=>w.classList.remove('playing');
       v.onended=()=>{w.classList.remove('playing');v.currentTime=0};
-      /* Декодер молчит слишком долго — тоже считаем отказом */
-      setTimeout(()=>{if(!w.classList.contains('ready')&&!w.dataset.failed)vFail(w,url)},7000);
+      try{v.load()}catch(e){}
+      /* Декодер молчит слишком долго и играть не начал — отдаём системному плееру */
+      setTimeout(()=>{
+        if(!w.classList.contains('ready')&&!w.classList.contains('playing')&&!w.dataset.failed)vFail(w,url);
+      },9000);
     }catch(e){}
   });
 }
 function vTap(w){
   const v=w.querySelector('video');
   if(!v)return;
-  if(v.paused){v.play().catch(()=>{})}else{v.pause()}
+  if(v.paused){
+    v.muted=false;
+    /* Тап — это жест пользователя: play сам дотянет данные, даже если preload молчал */
+    v.play().catch(()=>{const u=v.src;if(u)vFail(w,u)});
+  }else{v.pause()}
 }
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
@@ -2224,7 +2230,7 @@ function renderMsgs(c){
         /* Фиолетовая заглушка с кнопкой play, видео проявляется когда готово — как в телеге */
         const d=m.media.dur?String(Math.floor(m.media.dur/60))+':'+String(m.media.dur%60).padStart(2,'0'):'';
         body+='<div class="vwrap'+(m.media.kind==='circle'?' circ':'')+'" data-vid="'+m.id+'" onclick="event.stopPropagation();vTap(this)">'+
-          '<video playsinline preload="metadata"></video>'+
+          '<video playsinline preload="auto" muted></video>'+
           '<span class="vplay"><i><svg viewBox="0 0 24 24" fill="#5B4BD4" width="26" height="26"><path d="M8 5.5v13l11-6.5z"/></svg></i></span>'+
           (d?'<span class="vdur">'+d+'</span>':'')+'</div>';
       }
@@ -2491,10 +2497,92 @@ function sendPhoto(input){
 /* Голосовые: тап — запись, тап — отправка */
 let rec=null,recChunks=[],recStart=0;
 let wavRec=null; /* запасная запись для браузеров без MediaRecorder */
-async function toggleRec(){
+/* Кнопка как в телеге: тап — переключить микрофон/кружок, удержание — запись */
+let recMode='voice',holdT=null,holdStarted=false,recFixed=false,touchY0=0,recCancelFlag=false;
+const MIC_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>';
+const CIRC_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>';
+function setRecMode(m){
+  recMode=m;
+  document.getElementById('mic-btn').innerHTML=m==='voice'?MIC_SVG:CIRC_SVG;
+}
+function initMicBtn(){
+  const b=document.getElementById('mic-btn');
+  if(!b)return;
+  setRecMode('voice');
+  b.addEventListener('touchstart',e=>{
+    e.preventDefault();
+    touchY0=e.touches[0].clientY;
+    recCancelFlag=false;recFixed=false;holdStarted=false;
+    holdT=setTimeout(()=>{
+      holdStarted=true;
+      if(recMode==='circle'){startCircle()}
+      else{startVoiceHold()}
+    },260);
+  },{passive:false});
+  b.addEventListener('touchmove',e=>{
+    if(!holdStarted||recMode!=='voice')return;
+    const dy=e.touches[0].clientY-touchY0;
+    if(dy<-64&&!recFixed){
+      recFixed=true;
+      toast('Запись закреплена — жмите ➤, чтобы отправить');
+      showVoiceBar();
+    }
+  },{passive:true});
+  b.addEventListener('touchend',e=>{
+    clearTimeout(holdT);
+    if(!holdStarted){
+      /* Короткий тап — переключение режима */
+      setRecMode(recMode==='voice'?'circle':'voice');
+      toast(recMode==='voice'?'Микрофон: зажмите для записи':'Кружок: зажмите для записи');
+      return;
+    }
+    if(recMode==='voice'&&!recFixed)stopVoice(true);
+    /* Кружок останавливается кнопками в его окне */
+  });
+  /* Десктоп без тача — по клику старт/стоп */
+  b.addEventListener('click',e=>{
+    if('ontouchstart' in window)return;
+    if(rec||wavRec){stopVoice(true);return}
+    if(recMode==='circle'){startCircle()}else{startVoiceHold()}
+  });
+}
+function showVoiceBar(){
+  let bar=document.getElementById('voice-bar');
+  if(!bar){
+    bar=document.createElement('div');
+    bar.id='voice-bar';
+    bar.style.cssText='position:fixed;left:12px;right:12px;bottom:calc(74px + env(safe-area-inset-bottom));z-index:340;background:var(--glass-2);backdrop-filter:blur(14px);border:1px solid var(--edge);border-radius:16px;padding:11px 14px;display:flex;align-items:center;gap:12px';
+    bar.innerHTML='<span style="width:10px;height:10px;border-radius:50%;background:var(--danger);animation:pulse 1s infinite"></span>'+
+      '<b id="voice-timer" style="font-variant-numeric:tabular-nums;flex:1">0:00</b>'+
+      '<button class="icon-btn" onclick="stopVoice(false)" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20"><path d="M6 6l12 12M18 6L6 18"/></svg></button>'+
+      '<button class="icon-btn" onclick="stopVoice(true)" style="color:var(--accent)"><svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg></button>';
+    document.body.appendChild(bar);
+  }
+  bar.style.display='flex';
+}
+function hideVoiceBar(){
+  const bar=document.getElementById('voice-bar');
+  if(bar)bar.style.display='none';
+}
+let voiceTimerInt=null;
+function startVoiceHold(){
+  startVoiceRec();
+  showVoiceBar();
+  voiceTimerInt=setInterval(()=>{
+    const t=Math.floor((Date.now()-recStart)/1000);
+    const el=document.getElementById('voice-timer');
+    if(el)el.textContent=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+  },300);
+}
+function stopVoice(send){
+  clearInterval(voiceTimerInt);hideVoiceBar();
+  recCancelFlag=!send;
+  if(rec){try{rec.stop()}catch(e){}}
+  if(wavRec){try{wavRec.stop()}catch(e){}}
+}
+async function startVoiceRec(){
   const btn=document.getElementById('mic-btn');
-  if(rec){rec.stop();return}
-  if(wavRec){wavRec.stop();return}
+  if(rec||wavRec)return;
   if(!navigator.mediaDevices){toast('Браузер не даёт доступ к микрофону — откройте в Chrome');return}
   if(!window.MediaRecorder){startWavRec(btn);return}
   try{
@@ -2508,6 +2596,8 @@ async function toggleRec(){
       const dur=Math.round((Date.now()-recStart)/1000);
       const blob=new Blob(recChunks,{type:rec.mimeType||'audio/webm'});
       rec=null;btn.style.color='';
+      hideVoiceBar();clearInterval(voiceTimerInt);
+      if(recCancelFlag){recCancelFlag=false;toast('Запись отменена');return}
       if(dur<1){toast('Слишком коротко');return}
       const fr=new FileReader();
       fr.onload=async()=>{
@@ -2522,8 +2612,10 @@ async function toggleRec(){
     };
     rec.start();
     btn.style.color='var(--danger)';
-    toast('Запись… тапните ещё раз, чтобы отправить');
   }catch(e){toast(micErrText(e))}
+}
+function toggleRec(){ /* совместимость со старыми вызовами */
+  if(rec||wavRec){stopVoice(true)}else{startVoiceHold()}
 }
 /* ===== ВИДЕО ===== */
 let MAX_MB=10;
@@ -2545,6 +2637,11 @@ function sendFile(input){
     }catch(e){}
   };
   fr.readAsDataURL(f);
+}
+function sendMedia(input){
+  const f=input.files&&input.files[0];
+  if(!f)return;
+  if(/^video\//.test(f.type)){sendVideo(input)}else{sendPhoto(input)}
 }
 function sendVideo(input){
   const f=input.files&&input.files[0];
@@ -2872,6 +2969,7 @@ function openSearch(){
   const inp=document.getElementById('search-input');
   inp.value='';inp.focus();
 }
+initMicBtn();
 document.getElementById('composer-input').addEventListener('input',sendTyping);
 document.getElementById('search-input').addEventListener('input',()=>{
   clearTimeout(searchTimer);
