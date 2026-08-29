@@ -152,6 +152,7 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
 @media (prefers-reduced-motion: reduce){*{animation-duration:.01s!important;transition-duration:.01s!important}}
 
 /* Галочки и непрочитанные */
+.dev-chip.co{background:linear-gradient(135deg,#5FD3F3,#2E9BFF);box-shadow:0 2px 6px rgba(46,155,255,.35)}
 .dev-chip{display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#FFB84D,#E8890B);color:#fff;
   border-radius:7px;padding:1px 6px;font-size:.6rem;font-weight:800;letter-spacing:.4px;vertical-align:2px;
   box-shadow:0 2px 6px rgba(232,137,11,.35)}
@@ -951,6 +952,12 @@ body{
       <div id="msgmenu-body"></div>
     </div>
 
+    <div class="sheet" id="sheet-contact">
+      <div class="grip"></div>
+      <h3>Связаться с командой</h3>
+      <div id="contact-body"></div>
+    </div>
+
     <div class="sheet" id="sheet-forward">
       <div class="grip"></div>
       <h3>Переслать</h3>
@@ -1391,7 +1398,7 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -1474,7 +1481,38 @@ function colorFor(str){
 /* Кружок собеседника: фото, если есть, иначе цвет с буквой */
 /* Плашка разработчика — видна всем */
 function devChip(u){
-  return (u&&u.dev)?' <span class="dev-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" width="9" height="9"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>DEV</span>':'';
+  if(u&&u.codev&&!u.dev){
+    return ' <span class="dev-chip co" onclick="event.stopPropagation();teamContact(\''+esc(u.username||'')+'\',1)">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" width="9" height="9"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>CO-DEV</span>';
+  }
+  return (u&&u.dev)?' <span class="dev-chip" onclick="event.stopPropagation();teamContact(\''+esc((u&&u.username)||'')+'\',0)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" width="9" height="9"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>DEV</span>':'';
+}
+
+/* Тап по плашке — быстрая связь с командой */
+let contactUname='';
+function teamContact(uname,isCo){
+  if(!uname)return;
+  contactUname=uname;
+  const b=document.getElementById('contact-body');
+  b.innerHTML='<div class="conv-preview" style="margin-bottom:12px">'+
+      (isCo?'Помощник разработчика':'Разработчик Newchat')+' · @'+esc(uname)+
+      '<div style="margin-top:4px">Напишите по поводу нарушения — ответим и разберёмся.</div></div>'+
+    ['Скам и обман на бирже','Докс и слив личных данных','Угрозы и оскорбления','Ошибка в приложении','Другой вопрос']
+      .map(t=>'<button class="report-opt" onclick="startContact(\''+t.replace(/'/g,"")+'\')"><span class="ic">'+
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 12a8 8 0 11-3-6.2"/><path d="M12 8v5l3 2"/></svg></span>'+
+        '<span><b>'+t+'</b></span></button>').join('');
+  openSheet('sheet-contact');
+}
+async function startContact(topic){
+  closeSheets();
+  try{
+    const r=await api('/api/chats/create',{username:contactUname});
+    await refresh();
+    openChat(r.chatId);
+    const inp=document.getElementById('composer-input');
+    inp.value=topic+': ';
+    inp.focus();
+  }catch(e){}
 }
 function avaHtml(peer,extra){
   extra=extra||'';

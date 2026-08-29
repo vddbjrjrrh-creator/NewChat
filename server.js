@@ -16,7 +16,10 @@ const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 /* Юзернеймы, которым сервер выдаёт галочку разработчика.
    Впиши сюда себя и друга. */
 const DEV_USERNAMES = (process.env.DEV_USERNAMES || 'shadow')
-  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  .split(',').map(s => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+/* Помощники разработчика: плашка CO-DEV, но без доступа к дев-панели */
+const CODEV_USERNAMES = (process.env.CODEV_USERNAMES || '')
+  .split(',').map(s => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
 
 /* Ключ от SMS.ru. Если не задан — код показывается на экране (режим разработки). */
 const SMSRU_API_ID = process.env.SMSRU_API_ID || '';
@@ -262,6 +265,7 @@ function publicUser(u) {
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
     bot: !!u.isBot, anon: !!u.anon,
     phoneOk: !!u.phone,
+    codev: isCodev(u),
     trust: u.isBot ? undefined : (u.trust || 0),
     reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
     ageDays: Math.max(0, Math.floor((now() - (u.createdAt || now())) / 86400e3)),
@@ -277,6 +281,9 @@ function userByToken(token) {
 }
 function isDev(user) {
   return !!(user && (user.dev || DEV_USERNAMES.includes(user.username || '')));
+}
+function isCodev(user) {
+  return !!(user && CODEV_USERNAMES.includes(user.username || ''));
 }
 function isPremium(user) {
   if (isDev(user)) return true; /* у разработчиков всегда премиум */
@@ -405,6 +412,7 @@ function fullState(user) {
       anonMode: !!user.anon,
       email: user.email || '',
       phoneOk: !!user.phone,
+      codev: isCodev(user),
       invites: user.inviteCount || 0,
       invitesNeeded: PREMIUM.invites,
       requisites: user.requisites || null
@@ -1079,13 +1087,14 @@ async function sendMail(to, code) {
   ].join('\r\n');
 
   /* Российские сервисы — работают без VPN */
+  const errs = [];
   if (MP_KEY) {
     try { await mailopost(to, code + ' — код входа в Newchat', html); return { sent: true }; }
-    catch (e) { console.error('Почта (Mailopost):', e.message); }
+    catch (e) { console.error('Почта (Mailopost):', e.message); errs.push('Mailopost → ' + e.message); }
   }
   if (RS_KEY) {
     try { await rusender(to, code + ' — код входа в Newchat', html); return { sent: true }; }
-    catch (e) { console.error('Почта (Rusender):', e.message); }
+    catch (e) { console.error('Почта (Rusender):', e.message); errs.push('Rusender → ' + e.message); }
   }
 
   /* SendPulse — работает из России по обычному HTTPS */
@@ -1094,7 +1103,7 @@ async function sendMail(to, code) {
       await sendPulse(to, code + ' — код входа в Newchat', html);
       return { sent: true };
     } catch (e) {
-      console.error('Почта (SendPulse):', e.message);
+      console.error('Почта (SendPulse):', e.message); errs.push('SendPulse → ' + e.message);
       if (!MAIL_HOOK_URL && !BREVO_KEY && !(MAIL_USER && MAIL_PASS)) return { sent: false, reason: e.message };
     }
   }
@@ -1105,7 +1114,7 @@ async function sendMail(to, code) {
       await hookSend(to, code + ' — код входа в Newchat', html);
       return { sent: true };
     } catch (e) {
-      console.error('Почта (мостик):', e.message);
+      console.error('Почта (мостик):', e.message); errs.push('мостик → ' + e.message);
       if (!BREVO_KEY && !(MAIL_USER && MAIL_PASS)) return { sent: false, reason: e.message };
     }
   }
@@ -1116,7 +1125,7 @@ async function sendMail(to, code) {
       await brevoSend(to, code + ' — код входа в Newchat', html);
       return { sent: true };
     } catch (e) {
-      console.error('Почта (Brevo):', e.message);
+      console.error('Почта (Brevo):', e.message); errs.push('Brevo → ' + e.message);
       if (!MAIL_USER || !MAIL_PASS) return { sent: false, reason: e.message };
     }
   }
@@ -1131,18 +1140,11 @@ async function sendMail(to, code) {
       return { sent: true };
     } catch (e) {
       lastErr = e.message || 'неизвестная ошибка';
-      console.error('Почта (порт ' + port + '):', lastErr);
+      console.error('Почта (порт ' + port + '):', lastErr); errs.push('SMTP:' + port + ' → ' + lastErr);
       if (/пароль отклонён|RCPT|MAIL FROM/.test(lastErr)) break; /* не сеть — пробовать другой порт бессмысленно */
     }
   }
-  const tried = [];
-  if (MP_KEY) tried.push('Mailopost');
-  if (RS_KEY) tried.push('Rusender');
-  if (SP_ID && SP_SECRET) tried.push('SendPulse');
-  if (MAIL_HOOK_URL) tried.push('мостик');
-  if (BREVO_KEY) tried.push('Brevo');
-  if (MAIL_USER && MAIL_PASS) tried.push('SMTP');
-  return { sent: false, reason: lastErr + ' (пробовали: ' + (tried.join(', ') || 'ничего не настроено') + ')' };
+  return { sent: false, reason: errs.length ? errs.join(' | ') : 'ничего не настроено' };
 }
 
 route('GET', '/api/mailcheck', async (req, res) => {
@@ -1154,7 +1156,7 @@ route('GET', '/api/mailcheck', async (req, res) => {
     brevo: !!BREVO_KEY,
     smtp: !!(MAIL_USER && MAIL_PASS),
     from: MAIL_USER || null,
-    build: 'rusender-3'
+    build: 'rusender-4'
   });
 });
 
@@ -1323,7 +1325,8 @@ route('POST', '/api/profile/setup', async (req, res, body, user) => {
   user.name = name;
   user.username = username;
   user.dev = DEV_USERNAMES.includes(username);
-  if (user.dev) user.verified = true;
+  user.codev = CODEV_USERNAMES.includes(username);
+  if (user.dev || user.codev) user.verified = true;
 
   db.usernames[username] = { owner: user.id, main: true, forSale: false, price: 0 };
 
@@ -1861,8 +1864,8 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
   const target = rec && db.users[rec.owner];
   if (!target) return send(res, 404, { error: 'Пользователь не найден' });
 
-  if (isDev(target) && (body.ban || body.trust !== undefined)) {
-    return send(res, 400, { error: 'Разработчика забанить или понизить нельзя' });
+  if ((isDev(target) || isCodev(target)) && (body.ban || body.trust !== undefined)) {
+    return send(res, 400, { error: 'Разработчика и помощника трогать нельзя' });
   }
 
   const done = [];
@@ -2324,6 +2327,7 @@ route('GET', '/api/config', async (req, res) => {
     botName: TG_BOT_NAME,
     sms: SMS_ENABLED,
     mail: MAIL_ENABLED,
+    team: DEV_USERNAMES.concat(CODEV_USERNAMES).slice(0, 6),
     maxMb: MAX_MB,
     videoDays: MEDIA_KEEP_DAYS,
     deal: { payHours: DEAL.payHours, confirmDays: DEAL.confirmDays }
