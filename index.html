@@ -1139,6 +1139,11 @@ body{
           Админ-панель<div class="spacer"></div><span class="val" style="color:var(--accent)">dev</span>
         </div>
 
+        <div class="pitem glass-card" onclick="manualUpdateCheck()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12a8 8 0 11-2.3-5.7"/><path d="M20 4v5h-5"/></svg>
+          Проверить обновления<div class="spacer"></div><span class="val" id="p-updver"></span>
+        </div>
+
         <div class="pitem glass-card" id="p-phone" style="display:none" onclick="startPhoneLink()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="3"/><path d="M11 18h2"/></svg>
           Привязать телефон<div class="spacer"></div><span class="val" style="color:var(--accent)">открыть биржу</span>
@@ -1361,10 +1366,22 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
+async function manualUpdateCheck(){
+  toast('Проверяем…');
+  try{
+    const res=await fetch('./index.html?nocache='+Date.now(),{cache:'no-store'});
+    const txt=await res.text();
+    const m=txt.match(/APP_VERSION\s*=\s*(\d+)/);
+    if(!m){toast('Не удалось проверить — нет связи с сайтом');return}
+    const fresh=Number(m[1]);
+    if(fresh>APP_VERSION){showUpdateBanner(fresh);toast('Есть новая версия '+fresh+'!')}
+    else toast('У вас последняя версия ('+APP_VERSION+')');
+  }catch(e){toast('Нет связи с сайтом')}
+}
 async function checkUpdate(){
   try{
     const res=await fetch('./index.html?nocache='+Date.now(),{cache:'no-store'});
@@ -3494,6 +3511,8 @@ function showErrs(){
 }
 function renderDiag(){
   document.getElementById('p-ver').textContent=APP_VERSION;
+  const uv=document.getElementById('p-updver');
+  if(uv)uv.textContent='версия '+APP_VERSION;
   const ua=navigator.userAgent;
   let br='другой браузер';
   if(IS_APP)br='приложение Newchat';
