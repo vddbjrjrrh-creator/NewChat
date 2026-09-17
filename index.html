@@ -188,11 +188,15 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
 .coin .face svg{width:56%;height:56%;filter:drop-shadow(0 3px 8px rgba(30,20,90,.4))}
 .coin .face b{color:#fff;font-size:1.5rem;letter-spacing:1px;text-shadow:0 3px 10px rgba(30,20,90,.45)}
 .coin-hint{text-align:center;font-size:.72rem;color:var(--ink-2);margin-top:10px}
-.nft-card{background:linear-gradient(150deg,rgba(124,107,240,.16),rgba(124,107,240,.04));
-  border:1px solid rgba(124,107,240,.28);border-radius:16px;padding:12px 8px;text-align:center;cursor:pointer;
-  transition:transform .16s}
-.nft-card:active{transform:scale(.95)}
-.nft-mini{width:46px;height:46px;border-radius:50%;margin:0 auto 6px;
+.nft-card{background:linear-gradient(155deg,rgba(124,107,240,.22),rgba(124,107,240,.05));
+  border:1px solid rgba(124,107,240,.32);border-radius:18px;padding:16px 8px 14px;text-align:center;cursor:pointer;
+  transition:transform .16s,box-shadow .2s;position:relative;overflow:hidden;
+  box-shadow:0 8px 22px rgba(90,74,200,.14)}
+.nft-card::before{content:'';position:absolute;inset:0;
+  background:linear-gradient(120deg,transparent 35%,rgba(255,255,255,.4) 50%,transparent 65%);
+  background-size:220% 100%;animation:sheen 4s linear infinite;pointer-events:none}
+.nft-card:active{transform:scale(.94)}
+.nft-mini{width:74px;height:74px;border-radius:50%;margin:0 auto 9px;
   background:radial-gradient(circle at 34% 28%,#A99CFF,#7E6BF0 55%,#5B4BD4 100%);
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 6px 14px rgba(80,62,200,.35), inset 0 -3px 8px rgba(40,26,120,.3)}
@@ -1208,11 +1212,6 @@ body{
       <div id="msgmenu-body"></div>
     </div>
 
-    <div class="sheet" id="sheet-gift">
-      <div class="grip"></div>
-      <div id="gift-body"></div>
-    </div>
-
     <div class="sheet" id="sheet-wp">
       <div class="grip"></div>
       <h3>Обои чата</h3>
@@ -1467,6 +1466,11 @@ body{
       <button class="btn" onclick="submitVerify()">Отправить заявку</button>
     </div>
 
+    <div class="sheet" id="sheet-gift">
+      <div class="grip"></div>
+      <div id="gift-body"></div>
+    </div>
+
     <div class="sheet" id="sheet-premium">
       <div class="grip"></div>
       <div class="confirm-box">
@@ -1517,6 +1521,21 @@ body{
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurge()">Очистить вложения</button>
       </div>
       <div id="dev-info" class="conv-preview" style="display:none;text-align:left;font-size:.78rem;white-space:pre-line"></div>
+      <div class="w-section" style="margin-top:14px">Выдать коллекционную карточку</div>
+      <div class="field" style="margin:8px 0">
+        <input type="text" class="txt" placeholder="Код карточки латиницей (devcoin, firstblood)" id="gc-type" autocapitalize="off">
+      </div>
+      <div class="field" style="margin:8px 0">
+        <input type="text" class="txt" placeholder="Название для показа (Первая кровь)" id="gc-name">
+      </div>
+      <div class="cur-row" style="flex-wrap:wrap">
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem" onclick="gcRar('Обычная',1)">Обычная</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem" onclick="gcRar('Редкая',3)">Редкая</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem" onclick="gcRar('Легендарная',5)">Легендарная</button>
+      </div>
+      <button class="btn ghost" onclick="devGiftCard()" style="margin-top:8px">Выдать карточку</button>
+      <button class="btn ghost" onclick="devGiftTypes()">Какие карточки уже есть</button>
+
       <div class="w-section" style="margin-top:14px">Рассылка всем пользователям</div>
       <div class="field" style="margin:8px 0">
         <input type="text" class="txt" placeholder="Текст объявления от Newchat" id="bc-text" maxlength="1000">
@@ -1632,7 +1651,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -1824,7 +1843,22 @@ function go(id){
 }
 function openSheet(id){
   const sheet=document.getElementById(id);
-  sheet.closest('.screen').querySelector('.sheet-veil').classList.add('show');
+  if(!sheet)return;
+  /* Шит может лежать в другом экране — переносим его в активный */
+  const active=document.querySelector('.screen.active');
+  if(active&&sheet.closest('.screen')!==active){
+    let veil=active.querySelector('.sheet-veil');
+    if(!veil){
+      veil=document.createElement('div');
+      veil.className='sheet-veil';
+      veil.onclick=closeSheets;
+      active.appendChild(veil);
+    }
+    active.appendChild(sheet);
+  }
+  const host=sheet.closest('.screen')||active;
+  const v=host&&host.querySelector('.sheet-veil');
+  if(v)v.classList.add('show');
   document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('show'));
   sheet.classList.add('show');
 }
@@ -2356,13 +2390,14 @@ function openPeer(){
     trustRow='<div style="padding:0 22px 4px"><div style="display:flex;justify-content:space-between;font-size:.76rem;color:var(--ink-2);margin-bottom:5px"><span>Батарейка доверия</span><b style="color:'+(p.trust>=70?'var(--trust)':(p.trust>=40?'var(--gold)':'var(--danger)'))+'">'+p.trust+'%</b></div>'+
     '<div style="height:7px;border-radius:4px;background:rgba(31,32,64,.08)"><div style="height:100%;width:'+p.trust+'%;border-radius:4px;background:'+(p.trust>=70?'var(--trust)':(p.trust>=40?'var(--gold)':'var(--danger)'))+'"></div></div></div>';
   }
+  peerGifts=(p&&p.gifts)||[];
   go('s-peer');
   document.getElementById('peer-body').innerHTML=
     '<div style="height:150px;background:'+(p.coverImg?'url('+p.coverImg+') center/cover':cover)+'"></div>'+
     '<div style="margin-top:-59px;text-align:center">'+avaBig+'</div>'+
     '<div style="text-align:center;padding:12px 20px 2px"><b style="font-size:1.4rem">'+esc(p.name||'')+'</b>'+check+devChip(p)+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
     '<div style="text-align:center;color:var(--ink-2);font-size:.82rem;padding-bottom:4px" onclick="copyText(\'@'+esc(p.username||'')+'\');toast(\'Юзернейм скопирован\')">@'+esc(p.username||'')+' · '+esc(sub)+'</div>'+
-    bioLine+dossier+trustRow+
+    bioLine+premLine(p)+peerShelf(p)+dossier+trustRow+
     '<div style="padding:12px 16px 18px;display:flex;flex-direction:column;gap:8px">'+
     (c.type==='dm'&&!p.bot?'<button class="btn ghost" style="margin:0" onclick="closeSheets();blockPeer()">'+(c.blocked?'Разблокировать':'Заблокировать')+'</button>':'')+
     (c.type==='dm'?'<button class="btn ghost" style="margin:0;color:var(--danger)" onclick="closeSheets();openSheet(\'sheet-report\')">Пожаловаться</button>':'')+
@@ -2851,6 +2886,33 @@ async function devBan(on){
   const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
   if(on&&!confirm('Забанить @'+username+'? Он не сможет пользоваться Newchat вообще.'))return;
   devAct({ban:on});
+}
+let gcRarity={rarity:'Редкая',rarityNum:3};
+function gcRar(rarity,rarityNum){
+  gcRarity={rarity,rarityNum};
+  toast('Редкость: '+rarity);
+}
+async function devGiftCard(){
+  const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
+  const type=document.getElementById('gc-type').value.trim();
+  const name=document.getElementById('gc-name').value.trim();
+  if(!username){toast('Введите юзернейм получателя в поле сверху');return}
+  if(!type){toast('Укажите код карточки латиницей');return}
+  try{
+    const r=await api('/api/dev/gift-card',{username,type,name,rarity:gcRarity.rarity,rarityNum:gcRarity.rarityNum});
+    toast(r.done.join(', '));
+    burst('star',innerWidth/2,innerHeight/2);
+  }catch(e){}
+}
+async function devGiftTypes(){
+  try{
+    const r=await api('/api/dev/gift-types',{});
+    const el=document.getElementById('dev-info');
+    el.style.display='block';
+    el.textContent=r.types.length
+      ? r.types.map(t=>t.name+' ('+t.type+') — выдано '+t.minted+(t.fixed?' из '+t.total+', тираж закрыт':', тираж растёт')).join('\n')
+      : 'Карточек пока нет';
+  }catch(e){}
 }
 async function devBroadcast(){
   const text=document.getElementById('bc-text').value.trim();
@@ -4184,9 +4246,37 @@ async function askHelp(preset){
 }
 /* ===== ВИТРИНА КОЛЛЕКЦИИ ===== */
 const SHIELD_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg>';
+function premLine(p){
+  if(!p.premium)return '';
+  const until=p.premiumUntil?new Date(p.premiumUntil):null;
+  const days=until?Math.max(0,Math.ceil((p.premiumUntil-Date.now())/86400e3)):0;
+  return '<div style="text-align:center;padding:2px 20px 10px">'+
+    '<span class="prem-chip" style="display:inline-block">★ PREMIUM'+(days>0&&days<3650?(' · ещё '+days+' дн.'):'')+'</span></div>';
+}
+function peerShelf(p){
+  const g=p.gifts||[];
+  if(!g.length)return '';
+  return '<div style="padding:4px 16px 10px">'+
+    '<div class="w-section" style="margin:0 0 8px">Коллекция</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">'+
+    g.map((x,i)=>'<div class="nft-card" onclick="openPeerGift('+i+')">'+
+      '<div class="nft-mini">'+SHIELD_SVG+'</div>'+
+      '<b style="font-size:.86rem;display:block">'+esc(x.name||'')+'</b>'+
+      '<span style="font-size:.68rem;color:var(--ink-2)">#'+x.num+' из '+x.total+'</span>'+
+      '<div style="margin-top:4px">'+Array.from({length:x.rarityNum||1},()=>'<span class="rar-dot"></span>').join('')+'</div>'+
+      '</div>').join('')+'</div></div>';
+}
+let peerGifts=[];
+function openPeerGift(i){
+  const g=peerGifts[i];
+  if(g)showGiftCard(g);
+}
 function openGift(i){
   const g=((S&&S.user&&S.user.gifts)||[])[i];
   if(!g)return;
+  showGiftCard(g);
+}
+function showGiftCard(g){
   const price=g.lastPrice
     ? ('<b style="font-size:1.1rem;color:var(--gold)">'+g.lastPrice.toLocaleString('ru')+' ₽</b>'+
        '<div style="font-size:.7rem;color:var(--ink-2)">последняя продажа '+new Date(g.lastSaleAt).toLocaleDateString('ru')+
@@ -4250,11 +4340,13 @@ function renderShelf(){
   }
   box.style.display='block';
   box.style.padding='14px 12px';
-  box.innerHTML='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">'+
+  box.innerHTML='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">'+
     items.map((g,i)=>'<div class="nft-card" onclick="openGift('+i+')">'+
       '<div class="nft-mini">'+SHIELD_SVG+'</div>'+
-      '<b style="font-size:.78rem;display:block">'+esc(g.name||'')+'</b>'+
-      '<span style="font-size:.64rem;color:var(--ink-2)">#'+g.num+' из '+g.total+'</span></div>').join('')+
+      '<b style="font-size:.86rem;display:block">'+esc(g.name||'')+'</b>'+
+      '<span style="font-size:.68rem;color:var(--ink-2)">#'+g.num+' из '+g.total+'</span>'+
+      '<div style="margin-top:4px">'+Array.from({length:g.rarityNum||1},()=>'<span class="rar-dot"></span>').join('')+'</div>'+
+      '</div>').join('')+
     '</div>';
 }
 function renderLook(){

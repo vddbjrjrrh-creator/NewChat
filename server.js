@@ -268,6 +268,9 @@ function publicUser(u) {
     hasKey: !!u.pubkey,
     codev: isCodev(u),
     bio: u.bio || '',
+    gifts: u.isBot ? [] : myGifts(u.id),
+    premium: isPremium(u),
+    premiumUntil: isPremium(u) ? (u.premiumUntil || 0) : 0,
     coverImg: u.coverImg || '',
     trust: u.isBot ? undefined : (u.trust || 0),
     reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
@@ -2019,6 +2022,67 @@ route('POST', '/api/dev/gift', async (req, res, body, user) => {
   send(res, 200, { done: ['подарен @' + gift] });
 });
 
+route('POST', '/api/dev/gift-card', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const uname = normUsername(body.username);
+  const rec = db.usernames[uname];
+  const target = rec && db.users[rec.owner];
+  if (!target) return send(res, 404, { error: 'Пользователь не найден' });
+
+  const type = String(body.type || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 24);
+  if (!type) return send(res, 400, { error: 'Укажите код карточки латиницей' });
+
+  db.gifts = db.gifts || [];
+  db.giftTypes = db.giftTypes || {};
+
+  /* Новый вид карточки — создаём на лету */
+  if (!GIFT_TYPES[type] && !db.giftTypes[type]) {
+    db.giftTypes[type] = {
+      name: String(body.name || type).slice(0, 30),
+      total: 0,
+      rarity: String(body.rarity || 'Редкая').slice(0, 20),
+      rarityNum: Math.max(1, Math.min(5, Number(body.rarityNum) || 3)),
+      desc: String(body.desc || '').slice(0, 200)
+    };
+  }
+
+  const t = GIFT_TYPES[type] || db.giftTypes[type];
+  const minted = db.gifts.filter(g => g.type === type).length;
+
+  if (GIFT_TYPES[type]) {
+    /* Заводские карточки: тираж закрыт навсегда */
+    if (minted >= GIFT_TYPES[type].total) {
+      return send(res, 400, { error: 'Тираж «' + t.name + '» исчерпан: ' + t.total + ' шт.' });
+    }
+  } else {
+    /* Свои карточки: тираж растёт с каждой выдачей */
+    db.giftTypes[type].total = minted + 1;
+  }
+
+  if (db.gifts.some(g => g.type === type && g.owner === target.id)) {
+    return send(res, 400, { error: 'У этого человека уже есть «' + t.name + '»' });
+  }
+
+  db.gifts.push({ id: uid(), type, num: minted + 1, owner: target.id, time: now() });
+  save();
+
+  serviceMessage(target.id, 'Команда Newchat вручила вам коллекционную карточку «' + t.name + '» №' + (minted + 1) + '. Она в вашем профиле.');
+  push(target.id, { type: 'state' });
+  send(res, 200, { done: ['выдана «' + t.name + '» №' + (minted + 1) + ' пользователю @' + uname] });
+});
+
+route('POST', '/api/dev/gift-types', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const all = [];
+  for (const [k, t] of Object.entries(GIFT_TYPES)) {
+    all.push({ type: k, name: t.name, total: t.total, minted: (db.gifts || []).filter(g => g.type === k).length, fixed: true });
+  }
+  for (const [k, t] of Object.entries(db.giftTypes || {})) {
+    all.push({ type: k, name: t.name, total: t.total, minted: (db.gifts || []).filter(g => g.type === k).length, fixed: false });
+  }
+  send(res, 200, { types: all });
+});
+
 route('POST', '/api/dev/broadcast', async (req, res, body, user) => {
   if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
   const text = String(body.text || '').trim().slice(0, 1000);
@@ -2385,7 +2449,7 @@ function myGifts(userId) {
   return (db.gifts || [])
     .filter(g => g.owner === userId)
     .map(g => {
-      const t = GIFT_TYPES[g.type] || {};
+      const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
       const sales = (db.giftSales || []).filter(s => s.type === g.type);
       const last = sales.length ? sales[sales.length - 1] : null;
       return {
