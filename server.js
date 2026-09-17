@@ -2409,6 +2409,247 @@ route('POST', '/api/chats/secret', async (req, res, body, user) => {
 });
 
 /* Помощник: отвечает на вопросы про само приложение */
+/* Биржа изменилась. Короткий сигнал не чаще раза в 5 секунд. */
+let lastMarketPing = 0;
+function marketChanged() {
+  if (now() - lastMarketPing < 5000) return;
+  lastMarketPing = now();
+  for (const u of Object.values(db.users)) {
+    if (u.isBot || !isOnline(u.id)) continue;
+    push(u.id, { type: 'market' });
+  }
+}
+
+/* ===== КОЛЛЕКЦИОННЫЕ КАРТОЧКИ ===== */
+const GIFT_TYPES = {
+  devcoin: {
+    name: 'DevCoin',
+    total: 2,
+    rarity: 'Легендарная',
+    rarityNum: 5,
+    desc: 'Монета создателей Newchat. Отчеканено две — по числу тех, кто писал этот мессенджер с нуля.',
+    devOnly: true
+  }
+};
+
+function myGifts(userId) {
+  return (db.gifts || [])
+    .filter(g => g.owner === userId)
+    .map(g => {
+      const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+      const sales = (db.giftSales || []).filter(s => s.type === g.type);
+      const last = sales.length ? sales[sales.length - 1] : null;
+      return {
+        id: g.id, type: g.type, num: g.num,
+        forSale: !!g.forSale, price: g.price || 0, frozen: !!g.frozen,
+        name: t.name || g.type, total: t.total || 0,
+        rarity: t.rarity || '', rarityNum: t.rarityNum || 1,
+        desc: t.desc || '',
+        issued: g.time,
+        lastPrice: last ? last.price : 0,
+        lastSaleAt: last ? last.time : 0,
+        salesCount: sales.length
+      };
+    });
+}
+
+/* Монета достаётся всем, кто записан разработчиком или помощником */
+function grantDevCoin(user) {
+  db.gifts = db.gifts || [];
+  let changed = false;
+  const devs = Object.values(db.users).filter(u => !u.isBot && (isDev(u) || isCodev(u)));
+  for (const d of devs) {
+    if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
+    const minted = db.gifts.filter(g => g.type === 'devcoin').length;
+    if (minted >= GIFT_TYPES.devcoin.total) break;
+    db.gifts.push({ id: uid(), type: 'devcoin', num: minted + 1, owner: d.id, time: now() });
+    changed = true;
+    serviceMessage(d.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
+    push(d.id, { type: 'state' });
+  }
+  if (changed) save();
+}
+
+route('GET', '/api/market', async (req, res, body, user) => {
+  /* Лёгкий ответ: только лоты, без переписки и медиа */
+  send(res, 200, {
+    market: marketList(user.id),
+    giftMarket: giftMarket(user.id),
+    gifts: myGifts(user.id),
+    usernames: myUsernames(user.id),
+    deals: Object.values(db.deals)
+      .filter(d => d.seller === user.id || d.buyer === user.id)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 20)
+      .map(d => dealView(d, user.id))
+  });
+});
+
+route('POST', '/api/gifts/sell', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'Карточка в сделке' });
+  if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле' });
+  if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты для получения денег' });
+  const price = Math.round(Number(body.price) || 0);
+  if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
+  if (price > 5000000) return send(res, 400, { error: 'Слишком большая цена' });
+  g.forSale = true;
+  g.price = price;
+  save();
+  marketChanged();
+  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
+});
+
+route('POST', '/api/gifts/unsell', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'Идёт сделка — снять нельзя' });
+  g.forSale = false;
+  g.price = 0;
+  save();
+  marketChanged();
+  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
+});
+
+route('POST', '/api/gifts/buy', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || !g.forSale) return send(res, 404, { error: 'Карточка не продаётся' });
+  if (g.owner === user.id) return send(res, 400, { error: 'Это ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'По карточке уже идёт сделка' });
+  if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
+
+  const seller = db.users[g.owner];
+  if (!seller || !seller.requisites) return send(res, 400, { error: 'У продавца нет реквизитов' });
+
+  const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+  const deal = {
+    id: uid(), kind: 'gift', giftId: g.id,
+    username: (t.name || g.type) + ' №' + g.num,
+    seller: seller.id, buyer: user.id,
+    price: g.price, status: 'pay',
+    createdAt: now(), requisites: seller.requisites
+  };
+  db.deals[deal.id] = deal;
+  g.frozen = deal.id;
+  save();
+
+  serviceMessage(seller.id, 'Покупатель хочет забрать вашу карточку «' + deal.username + '» за ' + g.price + ' ₽. Ожидайте перевод.');
+  push(seller.id, { type: 'state' });
+  push(user.id, { type: 'state' });
+  marketChanged();
+  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
+});
+
+route('POST', '/api/gifts/list', async (req, res, body, user) => {
+  grantDevCoin(user);
+  send(res, 200, { gifts: myGifts(user.id) });
+});
+
+/* ===== PUSH-УВЕДОМЛЕНИЯ ===== */
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'BGA17iH6l25CJBuj94BkyOxiSjqU9Y3DMSTe-yrCnYBkQ6zWVngCz_oRu53O7tNNFknpLfU5NmLYpSvHCXYDCLs';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'vOrmFqu0vvr-cYlc_MQPqu7dn-D3zul3HCvwnFSlO7I';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:newchat@example.com';
+
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function vapidJwt(audience) {
+  const header = b64url(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  const payload = b64url(JSON.stringify({
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+    sub: VAPID_SUBJECT
+  }));
+  const data = header + '.' + payload;
+  const key = crypto.createPrivateKey({
+    key: { kty: 'EC', crv: 'P-256', d: VAPID_PRIVATE,
+           x: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(1, 33)),
+           y: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(33, 65)) },
+    format: 'jwk'
+  });
+  const der = crypto.sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' });
+  return data + '.' + b64url(der);
+}
+
+function pushWeb(sub, ttl) {
+  return new Promise(resolve => {
+    try {
+      const https = require('https');
+      const { URL } = require('url');
+      const u = new URL(sub.endpoint);
+      const jwt = vapidJwt(u.origin);
+      const req = https.request({
+        hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+        headers: {
+          'TTL': String(ttl || 3600),
+          'Content-Length': 0,
+          'Urgency': 'high',
+          'Authorization': 'vapid t=' + jwt + ', k=' + VAPID_PUBLIC
+        }
+      }, res => {
+        if (res.statusCode === 404 || res.statusCode === 410) sub.dead = true;
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.setTimeout(8000, () => { req.destroy(); resolve(0); });
+      req.on('error', () => resolve(0));
+      req.end();
+    } catch (e) { resolve(0); }
+  });
+}
+
+function notifyPush(userId) {
+  const u = db.users[userId];
+  if (!u || !u.pushSubs || !u.pushSubs.length) return;
+  if (isOnline(userId)) return;
+  for (const sub of u.pushSubs) {
+    if (sub.dead) continue;
+    pushWeb(sub, 3600);
+  }
+  u.pushSubs = u.pushSubs.filter(s => !s.dead);
+}
+
+route('POST', '/api/push/subscribe', async (req, res, body, user) => {
+  const sub = body.sub;
+  if (!sub || !sub.endpoint) return send(res, 400, { error: 'Нет подписки' });
+  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== sub.endpoint);
+  user.pushSubs.push({ endpoint: String(sub.endpoint).slice(0, 500), time: now() });
+  if (user.pushSubs.length > 5) user.pushSubs = user.pushSubs.slice(-5);
+  save();
+  send(res, 200, { ok: true });
+});
+
+route('POST', '/api/push/unsubscribe', async (req, res, body, user) => {
+  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== body.endpoint);
+  save();
+  send(res, 200, { ok: true });
+});
+
+route('POST', '/api/push/peek', async (req, res, body, user) => {
+  let best = null;
+  for (const c of Object.values(db.chats)) {
+    if (!c.members.includes(user.id)) continue;
+    const readAt = (user.reads || {})[c.id] || 0;
+    for (const m of c.msgs) {
+      if (m.from === user.id || m.deleted || m.time <= readAt) continue;
+      if (!best || m.time > best.time) {
+        const author = db.users[m.from];
+        best = {
+          time: m.time,
+          chatId: c.id,
+          name: c.service ? 'Newchat' : ((author && author.name) || 'Сообщение'),
+          text: m.enc ? 'Зашифрованное сообщение'
+            : (m.text || (m.media ? 'Вложение' : '')).slice(0, 120)
+        };
+      }
+    }
+  }
+  send(res, 200, { msg: best });
+});
+
 const HELP_TOPICS = [
   { t: 'биржа-продажа', k: ['продать', 'выставить', 'продажа', 'цена', 'лот', 'сколько стоит'],
     a: 'Продать юзернейм: вкладка «Биржа» → «Мои» → «Юзернеймы» → кнопка «Продать» → укажите цену. Карточку продать так же, но в подвкладке «Карточки». Нужен привязанный телефон и реквизиты для получения денег — иначе покупателю некуда переводить.' },
