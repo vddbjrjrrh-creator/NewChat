@@ -1632,7 +1632,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -4185,7 +4185,7 @@ async function askHelp(preset){
 /* ===== ВИТРИНА КОЛЛЕКЦИИ ===== */
 const SHIELD_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg>';
 function openGift(i){
-  const g=((S&&S.gifts)||[])[i];
+  const g=((S&&S.user&&S.user.gifts)||[])[i];
   if(!g)return;
   const price=g.lastPrice
     ? ('<b style="font-size:1.1rem;color:var(--gold)">'+g.lastPrice.toLocaleString('ru')+' ₽</b>'+
@@ -4235,7 +4235,7 @@ function tossCoin(wrap){
 function renderShelf(){
   const box=document.getElementById('nft-shelf');
   if(!box)return;
-  const items=(S&&S.gifts)||[];
+  const items=(S&&S.user&&S.user.gifts)||[];
   if(!items.length){
     box.innerHTML=
       '<div style="font-size:2.6rem;margin-bottom:8px;filter:drop-shadow(0 6px 14px rgba(108,92,231,.35))">🎁</div>'+
