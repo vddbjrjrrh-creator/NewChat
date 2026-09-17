@@ -268,6 +268,7 @@ function publicUser(u) {
     hasKey: !!u.pubkey,
     codev: isCodev(u),
     bio: u.bio || '',
+    coverImg: u.coverImg || '',
     trust: u.isBot ? undefined : (u.trust || 0),
     reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
     ageDays: Math.max(0, Math.floor((now() - (u.createdAt || now())) / 86400e3)),
@@ -437,6 +438,7 @@ function myBots(userId) {
     }));
 }
 function fullState(user) {
+  try { grantDevCoin(user); } catch (e) {}
   return {
     user: Object.assign(publicUser(user), {
       phone: user.phone, trust: user.trust,
@@ -449,6 +451,8 @@ function fullState(user) {
       phoneOk: !!user.phone,
       codev: isCodev(user),
       bio: user.bio || '',
+      gifts: myGifts(user.id),
+      coverImg: user.coverImg || '',
       icon: user.icon || '',
       invites: user.inviteCount || 0,
       invitesNeeded: PREMIUM.invites,
@@ -2148,14 +2152,31 @@ route('POST', '/api/keys/get', async (req, res, body, user) => {
   const rec = db.usernames[uname];
   const target = rec && db.users[rec.owner];
   if (!target) return send(res, 404, { error: 'Пользователь не найден' });
-  if (!target.pubkey) return send(res, 400, { error: 'У собеседника ещё нет ключа — попросите его обновить приложение' });
+  if (!target.pubkey) {
+    /* Позовём собеседника: ключ создаётся при первом входе после обновления */
+    if (!target.keyAsked || now() - target.keyAsked > 3600e3) {
+      target.keyAsked = now();
+      serviceMessage(target.id, (user.name || 'Собеседник') + ' хочет включить с вами секретный чат. Обновите приложение и зайдите в него — ключ шифрования создастся сам.');
+      push(target.id, { type: 'state' });
+      save();
+    }
+    return send(res, 400, { error: 'У собеседника ещё нет ключа. Мы отправили ему просьбу зайти в приложение — попробуйте через пару минут.' });
+  }
   send(res, 200, { pub: target.pubkey, id: target.id });
 });
 
 route('POST', '/api/chats/wallpaper', async (req, res, body, user) => {
   const chat = db.chats[String(body.chatId || '')];
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  const wp = String(body.wp || '').slice(0, 40);
+  let wp = String(body.wp || '').slice(0, 40);
+  if (body.custom) {
+    /* Своя картинка из галереи */
+    const img = String(body.custom || '');
+    if (!/^data:image\/(jpeg|png|webp);base64,/.test(img) || img.length > 900000) {
+      return send(res, 400, { error: 'Картинка не подходит: до 600 КБ' });
+    }
+    wp = img;
+  }
   const both = !!body.both;
   const pid = chat.members.find(m => m !== user.id);
 
@@ -2348,6 +2369,58 @@ route('POST', '/api/push/peek', async (req, res, body, user) => {
   send(res, 200, { msg: best });
 });
 
+/* ===== КОЛЛЕКЦИОННЫЕ КАРТОЧКИ ===== */
+const GIFT_TYPES = {
+  devcoin: {
+    name: 'DevCoin',
+    total: 2,
+    rarity: 'Легендарная',
+    rarityNum: 5,
+    desc: 'Монета создателей Newchat. Отчеканено две — по числу тех, кто писал этот мессенджер с нуля.',
+    devOnly: true
+  }
+};
+
+function myGifts(userId) {
+  return (db.gifts || [])
+    .filter(g => g.owner === userId)
+    .map(g => {
+      const t = GIFT_TYPES[g.type] || {};
+      const sales = (db.giftSales || []).filter(s => s.type === g.type);
+      const last = sales.length ? sales[sales.length - 1] : null;
+      return {
+        id: g.id, type: g.type, num: g.num,
+        name: t.name || g.type, total: t.total || 0,
+        rarity: t.rarity || '', rarityNum: t.rarityNum || 1,
+        desc: t.desc || '',
+        issued: g.time,
+        lastPrice: last ? last.price : 0,
+        lastSaleAt: last ? last.time : 0,
+        salesCount: sales.length
+      };
+    });
+}
+
+/* Выдаём монету разработчикам: по одной, пока есть тираж */
+function grantDevCoin(user) {
+  if (!isDev(user)) return;
+  db.gifts = db.gifts || [];
+  if (db.gifts.some(g => g.type === 'devcoin' && g.owner === user.id)) return;
+  const minted = db.gifts.filter(g => g.type === 'devcoin').length;
+  if (minted >= GIFT_TYPES.devcoin.total) return;
+  db.gifts.push({
+    id: uid(), type: 'devcoin', num: minted + 1,
+    owner: user.id, time: now()
+  });
+  save();
+  serviceMessage(user.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
+}
+
+route('POST', '/api/gifts/list', async (req, res, body, user) => {
+  grantDevCoin(user);
+  send(res, 200, { gifts: myGifts(user.id) });
+});
+
 route('POST', '/api/help/ask', async (req, res, body, user) => {
   const q = String(body.q || '').toLowerCase().slice(0, 300);
   if (!q) return send(res, 400, { error: 'Пустой вопрос' });
@@ -2364,10 +2437,23 @@ route('POST', '/api/help/ask', async (req, res, body, user) => {
 
 route('POST', '/api/profile/style', async (req, res, body, user) => {
   /* Оформление профиля: обложка и подпись. Часть — только с премиумом. */
+  if (body.coverImg !== undefined) {
+    /* Своя обложка из галереи — премиум */
+    const img = String(body.coverImg || '');
+    if (!img) { user.coverImg = null; }
+    else {
+      if (!isPremium(user)) return send(res, 403, { error: 'Своя обложка доступна с премиумом' });
+      if (!/^data:image\/(jpeg|png|webp);base64,/.test(img) || img.length > 900000) {
+        return send(res, 400, { error: 'Картинка не подходит: до 600 КБ' });
+      }
+      user.coverImg = img;
+    }
+  }
   if (body.cover !== undefined) {
     const n = Math.max(0, Math.min(11, Number(body.cover) || 0));
     if (n > 5 && !isPremium(user)) return send(res, 403, { error: 'Эта обложка доступна с премиумом' });
     user.cover = n;
+    user.coverImg = null;
   }
   if (body.bio !== undefined) {
     user.bio = String(body.bio || '').slice(0, 140);
