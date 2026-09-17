@@ -265,7 +265,9 @@ function publicUser(u) {
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
     bot: !!u.isBot, anon: !!u.anon,
     phoneOk: !!u.phone,
+    hasKey: !!u.pubkey,
     codev: isCodev(u),
+    bio: u.bio || '',
     trust: u.isBot ? undefined : (u.trust || 0),
     reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
     ageDays: Math.max(0, Math.floor((now() - (u.createdAt || now())) / 86400e3)),
@@ -279,6 +281,34 @@ function userByToken(token) {
   const id = db.tokens[token];
   return id ? db.users[id] : null;
 }
+/* Серверы для звонков. STUN подсказывает адрес, TURN пропускает звук
+   через себя, когда прямое соединение не проходит — VPN, мобильный NAT. */
+function iceServers() {
+  const list = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ];
+  if (process.env.TURN_URL && process.env.TURN_USER) {
+    list.push({
+      urls: process.env.TURN_URL.split(',').map(v => v.trim()).filter(Boolean),
+      username: process.env.TURN_USER,
+      credential: process.env.TURN_PASS || ''
+    });
+  } else {
+    /* Бесплатный публичный ретранслятор — на первое время */
+    list.push({
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    });
+  }
+  return list;
+}
+
 function isDev(user) {
   return !!(user && (user.dev || DEV_USERNAMES.includes(user.username || '')));
 }
@@ -325,6 +355,9 @@ function chatView(c, userId) {
     unread: c.msgs.filter(m => m.from !== userId && !m.deleted && m.time > myReadAt && m.time > ((c.clearedAt || {})[userId] || 0)).length,
     muted: !!(me.muted || {})[c.id],
     ttl: c.ttl || 0,
+    secret: !!c.secret,
+    wp: ((c.wpFor || {})[userId]) || c.wp || '',
+    wpOffer: (c.wpOffer && c.wpOffer.from !== userId) ? c.wpOffer : null,
     blocked: type === 'dm' && peer && peer.id ? !!(me.blocked || {})[peer.id] : false,
     service: !!c.service,
     owner: c.owner || null,
@@ -334,6 +367,8 @@ function chatView(c, userId) {
     peer,
     msgs: c.msgs.filter(m => m.time > ((c.clearedAt || {})[userId] || 0)).slice(-200).map(m => ({
       id: m.id, text: m.text, time: m.time,
+      enc: m.deleted ? null : (m.enc || null),
+      iv: m.deleted ? null : (m.iv || null),
       media: m.deleted ? null : (m.media || null),
       reply: m.deleted ? null : (m.reply || null),
       fwd: m.deleted ? null : (m.fwd || null),
@@ -413,6 +448,8 @@ function fullState(user) {
       email: user.email || '',
       phoneOk: !!user.phone,
       codev: isCodev(user),
+      bio: user.bio || '',
+      icon: user.icon || '',
       invites: user.inviteCount || 0,
       invitesNeeded: PREMIUM.invites,
       requisites: user.requisites || null
@@ -1441,7 +1478,7 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
 
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
   if (body.media && !media) return send(res, 400, { error: 'Файл не подходит или больше ' + MAX_MB + ' МБ' });
-  if (!text && !media) return send(res, 400, { error: 'Пустое сообщение' });
+  if (!text && !media && !body.enc) return send(res, 400, { error: 'Пустое сообщение' });
   if (chat.service) return send(res, 400, { error: 'В служебный чат писать нельзя' });
   if (chat.type === 'channel' && chat.owner !== user.id) {
     return send(res, 403, { error: 'В канале пишет только владелец' });
@@ -1460,6 +1497,12 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
     : media.kind === 'circle' ? '⭕ Видеосообщение'
     : media.kind === 'file' ? ('📎 ' + media.name) : '🎬 Видео';
   const msg = { id: uid(), from: user.id, text: outText, time: now(), deleted: false };
+  if (body.enc) {
+    /* Шифротекст: сервер хранит и передаёт, но прочитать не может */
+    msg.enc = String(body.enc).slice(0, 300000);
+    msg.iv = String(body.iv || '').slice(0, 64);
+    msg.text = '';
+  }
   if (media) msg.media = media;
 
   /* Ответ на сообщение — храним короткий снимок цитаты */
@@ -1481,7 +1524,7 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
   if (chat.type === 'channel') {
     /* Пост уходит всем подписчикам */
     for (const m of chat.members) {
-      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, time: msg.time, out: false } });
+      if (m !== user.id) push(m, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, enc: msg.enc || null, iv: msg.iv || null, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, time: msg.time, out: false } });
     }
   } else {
     const peerId = chat.members.find(m => m !== user.id);
@@ -1499,10 +1542,11 @@ route('POST', '/api/messages/send', async (req, res, body, user) => {
       if (q.length > 500) q.splice(0, q.length - 500);
       save();
     } else if (peerId) {
-      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, time: msg.time, out: false } });
+      push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text: msg.text, enc: msg.enc || null, iv: msg.iv || null, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, time: msg.time, out: false } });
+      notifyPush(peerId);
     }
   }
-  send(res, 200, { message: { id: msg.id, text: msg.text, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, reactions: null, time: msg.time, out: true } });
+  send(res, 200, { message: { id: msg.id, text: msg.text, enc: msg.enc || null, iv: msg.iv || null, media: msg.media || null, reply: msg.reply || null, fwd: msg.fwd || null, reactions: null, time: msg.time, out: true } });
 });
 
 route('POST', '/api/messages/forward', async (req, res, body, user) => {
@@ -1548,6 +1592,7 @@ route('POST', '/api/messages/forward', async (req, res, body, user) => {
       save();
     } else if (pid) {
       push(pid, { type: 'message', chatId: dst.id, message: payload });
+      notifyPush(pid);
     }
   }
   send(res, 200, { message: Object.assign({}, payload, { out: true }) });
@@ -1601,34 +1646,160 @@ route('POST', '/api/messages/delete', async (req, res, body, user) => {
 
 /* ---------- Жалобы ---------- */
 
+function esc(v) {
+  return String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function reportHtml(r) {
+  const dt = t => new Date(t).toLocaleString('ru-RU');
+  const rows = r.snapshot.map(m => {
+    const who = m.from === r.against
+      ? (r.peerName || 'Собеседник') + ' (' + (r.peerUsername ? '@' + r.peerUsername : 'без юзернейма') + ')'
+      : (r.authorName || 'Заявитель');
+    const mark = m.deleted ? '<span class="del">УДАЛЕНО ОТПРАВИТЕЛЕМ</span> ' : '';
+    const med = m.media ? '<span class="med">[вложение: ' + esc(m.media) + ']</span> ' : '';
+    return '<tr><td class="t">' + dt(m.time) + '</td><td class="w">' + esc(who) +
+      '</td><td>' + mark + med + esc(m.text) + '</td></tr>';
+  }).join('');
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Протокол переписки №' + r.num + '</title><style>' +
+    'body{font-family:Arial,Helvetica,sans-serif;max-width:900px;margin:0 auto;padding:24px;color:#17181D;line-height:1.5}' +
+    'h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:26px 0 8px;border-bottom:2px solid #6C5CE7;padding-bottom:4px}' +
+    '.sub{color:#666;font-size:13px;margin-bottom:20px}' +
+    '.card{background:#F4F5F9;border-radius:8px;padding:14px 16px;margin:10px 0;font-size:14px}' +
+    'table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}' +
+    'th{background:#1B3A6B;color:#fff;text-align:left;padding:7px 8px;font-size:12px}' +
+    'td{border-bottom:1px solid #E3E5EC;padding:7px 8px;vertical-align:top}' +
+    '.t{white-space:nowrap;color:#666;width:130px}.w{width:200px;font-weight:bold}' +
+    '.del{color:#C9342A;font-weight:bold;font-size:11px}' +
+    '.med{color:#6C5CE7;font-size:11px}' +
+    'ol{padding-left:20px}li{margin-bottom:8px;font-size:14px}' +
+    '.warn{background:#FFF4E5;border-left:4px solid #E8890B;padding:12px 14px;margin:14px 0;font-size:13.5px}' +
+    '@media print{body{padding:0}h2{page-break-after:avoid}}' +
+    '</style></head><body>' +
+
+    '<h1>Протокол переписки №' + r.num + '</h1>' +
+    '<div class="sub">Мессенджер Newchat · тип обращения: ' + esc(r.kind) +
+    ' · сформирован ' + dt(r.time) + '</div>' +
+
+    '<h2>Заявитель</h2><div class="card">' +
+    'Имя: ' + esc(r.authorName) + '<br>Юзернейм: ' + (r.authorUsername ? '@' + esc(r.authorUsername) : '—') +
+    '</div>' +
+
+    '<h2>Лицо, в отношении которого подано обращение</h2><div class="card">' +
+    'Имя в мессенджере: ' + esc(r.peerName) + '<br>' +
+    'Юзернейм: ' + (r.peerUsername ? '@' + esc(r.peerUsername) : '—') + '<br>' +
+    'Телефон, указанный при регистрации: ' + (r.peerPhone ? '+7' + esc(r.peerPhone) : 'не привязан') + '<br>' +
+    'Почта: ' + (r.peerEmail ? esc(r.peerEmail) : 'не указана') + '<br>' +
+    'Аккаунт создан: ' + (r.peerCreated ? dt(r.peerCreated) : '—') +
+    '</div>' +
+
+    '<h2>Переписка полностью</h2>' +
+    '<div class="sub">Включая сообщения, удалённые отправителем. ' +
+    'Всего записей: ' + r.snapshot.length + '</div>' +
+    '<table><tr><th>Время</th><th>Отправитель</th><th>Сообщение</th></tr>' + rows + '</table>' +
+
+    '<h2>Что делать дальше</h2>' +
+    '<div class="warn">Сохраните эту страницу в PDF: в браузере нажмите «Поделиться» или «⋮» → ' +
+    '«Печать» → «Сохранить как PDF». Получится файл, который можно приложить к заявлению.</div>' +
+    '<ol>' +
+    '<li><b>Подайте заявление онлайн.</b> Портал МВД России: мвд.рф → раздел «Приём обращений». ' +
+    'Заявление рассматривается официально, ответ приходит в течение 30 дней.</li>' +
+    '<li><b>Либо придите в отдел полиции</b> по месту жительства с распечаткой этого протокола ' +
+    'и паспортом. Попросите зарегистрировать заявление и выдать талон-уведомление.</li>' +
+    '<li><b>Если речь о хищении денег</b> — приложите чеки и выписки о переводах. ' +
+    'Статья 159 УК РФ (мошенничество).</li>' +
+    '<li><b>Если распространены личные данные</b> — укажите это в заявлении. ' +
+    'Статья 137 УК РФ (нарушение неприкосновенности частной жизни), ' +
+    'плюс жалоба в Роскомнадзор: rkn.gov.ru.</li>' +
+    '<li><b>Сохраните номер протокола</b> — №' + r.num + '. По нему администрация Newchat ' +
+    'подтвердит подлинность переписки по запросу правоохранительных органов.</li>' +
+    '</ol>' +
+
+    '<h2>О документе</h2><div class="card" style="font-size:12.5px;color:#555">' +
+    'Протокол сформирован автоматически из базы данных мессенджера Newchat. ' +
+    'Содержит сообщения в том виде, в каком они хранятся на сервере, включая удалённые пользователями. ' +
+    'Документ не является заключением экспертизы и не устанавливает вину: ' +
+    'оценку даёт следствие и суд.' +
+    '</div></body></html>';
+}
+
 route('POST', '/api/reports/create', async (req, res, body, user) => {
   const chat = db.chats[body.chatId];
   const kind = body.kind === 'докс' ? 'докс' : 'скам';
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
   if (chat.type === 'channel' || chat.service) return send(res, 400, { error: 'Жаловаться можно на личную переписку' });
+  if (chat.secret) return send(res, 400, { error: 'В секретном чате сервер не хранит текст — протокол собрать невозможно' });
 
-  const peerId = chat.members.find(m => m !== user.id);
-
-  /* Антинакрутка: считаем жалобы этого пользователя за последний час */
-  const hourAgo = now() - 3600e3;
-  const recent = db.reports.filter(r => r.from === user.id && r.time > hourAgo);
-  if (recent.length >= 5) {
-    user.trust = Math.max(0, user.trust - 10);
-    save();
-    return send(res, 429, { error: 'Слишком много жалоб за час. Доверие снижено.' });
+  /* Пауза после предыдущей жалобы — чтобы протокол не использовали
+     как способ читать удалённые сообщения */
+  if (user.reportBlockUntil && user.reportBlockUntil > now()) {
+    const hrs = Math.ceil((user.reportBlockUntil - now()) / 3600e3);
+    return send(res, 429, { error: 'Следующую жалобу можно подать через ' + hrs + ' ч. Ограничение защищает от злоупотреблений.' });
   }
 
+  const peerId = chat.members.find(m => m !== user.id);
+  const peer = db.users[peerId] || {};
+  const email = normEmail(body.email);
+  if (!validEmail(email)) return send(res, 400, { error: 'Укажите почту, куда отправить протокол' });
+
   const num = 4000 + db.reports.length + 1;
-  db.reports.push({
-    num, from: user.id, against: peerId, chatId: chat.id,
-    kind, time: now(),
+  const token = crypto.randomBytes(16).toString('hex');
+  const report = {
+    num, token, from: user.id, against: peerId, chatId: chat.id,
+    kind, time: now(), email,
+    peerName: peer.name || '', peerUsername: peer.username || '',
+    peerPhone: peer.phone || '', peerEmail: peer.email || '',
+    peerCreated: peer.createdAt || 0,
+    authorName: user.name || '', authorUsername: user.username || '',
     /* Полный слепок переписки, включая удалённые сообщения */
-    snapshot: chat.msgs.map(m => ({ from: m.from, text: m.text, time: m.time, deleted: !!m.deleted }))
-  });
+    snapshot: chat.msgs.map(m => ({
+      from: m.from, text: m.text || '', time: m.time,
+      deleted: !!m.deleted, media: m.media ? m.media.kind : null
+    }))
+  };
+  db.reports.push(report);
+
+  /* Двое суток без новых жалоб и без биржи */
+  user.reportBlockUntil = now() + 2 * 86400e3;
   save();
 
-  serviceMessage(user.id, `Жалоба №${num} (${kind}) принята и передана в полицию. Статус можно отслеживать здесь.`);
-  send(res, 200, { num });
+  const link = PUBLIC_URL + '/report/' + num + '?t=' + token;
+
+  if (MAIL_ENABLED) {
+    const html = '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px">' +
+      '<h2 style="color:#17181D">Протокол переписки №' + num + '</h2>' +
+      '<p>Вы подали жалобу «' + kind + '» в Newchat. Протокол переписки со всеми сообщениями, ' +
+      'включая удалённые, доступен по ссылке:</p>' +
+      '<p><a href="' + link + '" style="color:#6C5CE7;font-weight:bold">Открыть протокол №' + num + '</a></p>' +
+      '<p>Откройте ссылку и сохраните страницу в PDF: в браузере «Поделиться» → «Печать» → «Сохранить как PDF».</p>' +
+      '<p>Внутри протокола — инструкция, куда и как подать заявление.</p>' +
+      '<p style="color:#787A86;font-size:13px">Ссылка действует 30 дней. Не пересылайте её посторонним: ' +
+      'в протоколе есть личные данные.</p></div>';
+    sendMail(email, num).catch(() => {});
+    /* письмо с кодом не подходит — шлём собственное */
+    try {
+      if (typeof rusender === 'function' && RS_KEY) {
+        rusender(email, 'Протокол переписки №' + num + ' — Newchat', html).catch(() => {});
+      } else if (BREVO_KEY) {
+        brevoSend(email, 'Протокол переписки №' + num + ' — Newchat', html).catch(() => {});
+      } else if (MAIL_HOOK_URL) {
+        hookSend(email, 'Протокол переписки №' + num + ' — Newchat', html).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  serviceMessage(user.id,
+    'Жалоба №' + num + ' (' + kind + ') зарегистрирована.\n\n' +
+    'Протокол переписки со всеми сообщениями, включая удалённые: ' + link + '\n\n' +
+    'Откройте ссылку и сохраните в PDF, затем подайте заявление — инструкция внутри протокола.\n\n' +
+    'Следующую жалобу можно подать через 2 суток: ограничение защищает от тех, ' +
+    'кто использовал бы протокол ради чтения удалённых сообщений.');
+  push(user.id, { type: 'state' });
+
+  send(res, 200, { num, link, mailed: MAIL_ENABLED });
 });
 
 /* ---------- Реквизиты для получения денег ---------- */
@@ -1678,6 +1849,7 @@ route('POST', '/api/deals/start', async (req, res, body, user) => {
   if (!seller || !seller.requisites) return send(res, 400, { error: 'Продавец не указал реквизиты' });
 
   if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
+  if (user.reportBlockUntil && user.reportBlockUntil > now()) return send(res, 403, { error: 'Биржа закрыта на 2 суток после подачи жалобы' });
   const active = Object.values(db.deals).filter(d => d.buyer === user.id && (d.status === 'pay' || d.status === 'paid'));
   if (active.length >= 3) return send(res, 400, { error: 'У вас уже 3 активные сделки' });
 
@@ -1961,6 +2133,253 @@ route('POST', '/api/auth/logout', async (req, res, body, user) => {
   send(res, 200, { ok: true });
 });
 
+route('POST', '/api/keys/publish', async (req, res, body, user) => {
+  /* Клиент присылает только ПУБЛИЧНЫЙ ключ. Приватный не покидает телефон. */
+  const key = String(body.pub || '').slice(0, 800);
+  if (!key || !/^[A-Za-z0-9+/=_-]+$/.test(key)) return send(res, 400, { error: 'Неверный ключ' });
+  user.pubkey = key;
+  user.keyAt = now();
+  save();
+  send(res, 200, { ok: true });
+});
+
+route('POST', '/api/keys/get', async (req, res, body, user) => {
+  const uname = normUsername(body.username);
+  const rec = db.usernames[uname];
+  const target = rec && db.users[rec.owner];
+  if (!target) return send(res, 404, { error: 'Пользователь не найден' });
+  if (!target.pubkey) return send(res, 400, { error: 'У собеседника ещё нет ключа — попросите его обновить приложение' });
+  send(res, 200, { pub: target.pubkey, id: target.id });
+});
+
+route('POST', '/api/chats/wallpaper', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  const wp = String(body.wp || '').slice(0, 40);
+  const both = !!body.both;
+  const pid = chat.members.find(m => m !== user.id);
+
+  if (!both) {
+    /* Только для себя */
+    chat.wpFor = chat.wpFor || {};
+    chat.wpFor[user.id] = wp;
+    save();
+    return send(res, 200, { chats: userChats(user.id) });
+  }
+
+  /* Для обоих — нужно согласие собеседника */
+  chat.wpOffer = { from: user.id, wp, time: now() };
+  save();
+  if (pid) {
+    serviceMessage(pid, (user.name || 'Собеседник') + ' предлагает поставить общие обои в этом чате. Откройте меню чата, чтобы принять или отклонить.');
+    push(pid, { type: 'state' });
+  }
+  send(res, 200, { offered: true, chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/wallpaper/answer', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (!chat.wpOffer || chat.wpOffer.from === user.id) return send(res, 400, { error: 'Нет предложения' });
+  const who = db.users[chat.wpOffer.from];
+  if (body.accept) {
+    chat.wp = chat.wpOffer.wp;
+    chat.wpFor = {};
+    if (who) {
+      serviceMessage(who.id, (user.name || 'Собеседник') + ' принял общие обои.');
+      push(who.id, { type: 'state' });
+    }
+  } else if (who) {
+    serviceMessage(who.id, (user.name || 'Собеседник') + ' отклонил смену обоев.');
+    push(who.id, { type: 'state' });
+  }
+  chat.wpOffer = null;
+  save();
+  send(res, 200, { chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/secret', async (req, res, body, user) => {
+  /* Включает режим секретного чата: сервер перестаёт понимать содержимое */
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (chat.type === 'channel' || chat.service) return send(res, 400, { error: 'Только для личных чатов' });
+  chat.secret = !!body.on;
+  save();
+  const pid = chat.members.find(m => m !== user.id);
+  if (pid) {
+    serviceMessage(pid, chat.secret
+      ? 'Собеседник включил секретный чат. Сообщения шифруются на устройствах — сервер их не читает. Жалобы со слепком переписки в таком чате недоступны.'
+      : 'Секретный чат выключен.');
+    push(pid, { type: 'state' });
+  }
+  send(res, 200, { secret: chat.secret, chats: userChats(user.id) });
+});
+
+/* Помощник: отвечает на вопросы про само приложение */
+const HELP_TOPICS = [
+  { k: ['биржа', 'юзернейм', 'продать', 'купить', 'лот'],
+    a: 'Биржа юзернеймов — вкладка «Биржа». Чтобы продать: «Мои» → кнопка «Продать» у нужного юзернейма, укажите цену. Чтобы купить: вкладка «Каталог» → выберите лот → «Купить». Для торговли нужен привязанный телефон: так покупатели знают, с кем имеют дело. Деньги идут напрямую продавцу, юзернейм передаётся после подтверждения.' },
+  { k: ['скам', 'докс', 'жалоб', 'обман', 'мошенн', 'полиц'],
+    a: 'Если вас обманули: откройте чат → меню «⋮» → «Пожаловаться» → выберите «Скам» или «Докс» → укажите почту. Мы соберём протокол переписки со всеми сообщениями, включая удалённые, и данными собеседника. Придёт ссылка: сохраните страницу в PDF и подайте заявление в полицию — инструкция внутри протокола. После жалобы 2 суток нельзя подавать новые и закрыта биржа.' },
+  { k: ['секрет', 'шифр', 'приватн', 'безопасн'],
+    a: 'Секретный чат: меню чата → «Секретный чат». Сообщения шифруются прямо на телефонах, сервер видит только набор символов. Но пожаловаться в таком чате нельзя — слепка переписки не останется. Ключ хранится в памяти телефона: если очистить данные приложения, старые секретные сообщения не восстановить.' },
+  { k: ['звонок', 'позвонить', 'связь', 'не соединя'],
+    a: 'Звонок — кнопка трубки в шапке чата. Если соединение не устанавливается, попробуйте выключить VPN или перейти на Wi-Fi: некоторые сети не пропускают прямое соединение. Во время звонка можно включить видео и переключить громкую связь.' },
+  { k: ['премиум', 'подписк'],
+    a: 'Премиум даёт: сторис, больше слотов для юзернеймов, особые обложки профиля. Сейчас выдаётся вручную командой — напишите разработчику через плашку DEV рядом с именем.' },
+  { k: ['кружок', 'видео', 'голосов', 'запис'],
+    a: 'Голосовое: зажмите кнопку микрофона, отпустите — отправится. Свайп вверх закрепляет запись, тогда можно отпустить палец. Кружок: короткий тап по той же кнопке переключает её в режим кружка, дальше так же зажимаете. Видео и файлы — через скрепку и галерею, до 10 МБ. Видео хранится 7 дней.' },
+  { k: ['фон', 'обои', 'тема', 'шрифт', 'внешн', 'тёмн', 'темн'],
+    a: 'Обои чата: меню чата → «Обои чата». Можно поставить себе или предложить обоим — собеседник получит запрос. Шрифт, обложка профиля и тёмная тема — в профиле, раздел «Внешний вид».' },
+  { k: ['удал', 'аккаунт', 'выйти', 'выход'],
+    a: 'Выйти из аккаунта: профиль → «Выйти». Сессия при этом удаляется на сервере. Удаление аккаунта целиком пока делается через обращение к разработчику — плашка DEV рядом с именем.' },
+  { k: ['канал', 'бот'],
+    a: 'Канал создаётся через кнопку «плюс» на вкладке «Чаты». Писать в канале может только владелец. Боты создаются там же — вы получите токен для подключения своей программы.' },
+  { k: ['сервер', 'данные', 'хранит', 'где'],
+    a: 'Подробно расписано в профиле → «О сервисе»: где стоят серверы, что храним, сколько живут видео и какие есть ограничения. Если коротко: приложение на GitHub Pages, сервер на Render, база — Neon PostgreSQL.' }
+];
+
+/* ===== PUSH-УВЕДОМЛЕНИЯ =====
+   Работают, когда приложение закрыто. Только для установки через браузер
+   (Chrome → «Добавить на главный экран»), WebView такое не поддерживает. */
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'BGA17iH6l25CJBuj94BkyOxiSjqU9Y3DMSTe-yrCnYBkQ6zWVngCz_oRu53O7tNNFknpLfU5NmLYpSvHCXYDCLs';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'vOrmFqu0vvr-cYlc_MQPqu7dn-D3zul3HCvwnFSlO7I';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:newchat@example.com';
+
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function vapidJwt(audience) {
+  const header = b64url(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  const payload = b64url(JSON.stringify({
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+    sub: VAPID_SUBJECT
+  }));
+  const data = header + '.' + payload;
+
+  const key = crypto.createPrivateKey({
+    key: { kty: 'EC', crv: 'P-256', d: VAPID_PRIVATE,
+           x: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(1, 33)),
+           y: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(33, 65)) },
+    format: 'jwk'
+  });
+  const der = crypto.sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' });
+  return data + '.' + b64url(der);
+}
+
+function pushWeb(sub, ttl) {
+  return new Promise(resolve => {
+    try {
+      const https = require('https');
+      const { URL } = require('url');
+      const u = new URL(sub.endpoint);
+      const jwt = vapidJwt(u.origin);
+      const req = https.request({
+        hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+        headers: {
+          'TTL': String(ttl || 3600),
+          'Content-Length': 0,
+          'Urgency': 'high',
+          'Authorization': 'vapid t=' + jwt + ', k=' + VAPID_PUBLIC
+        }
+      }, res => {
+        if (res.statusCode === 404 || res.statusCode === 410) sub.dead = true;
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.setTimeout(8000, () => { req.destroy(); resolve(0); });
+      req.on('error', () => resolve(0));
+      req.end();
+    } catch (e) { resolve(0); }
+  });
+}
+
+/* Шлём «звоночек» — само содержимое приложение заберёт само */
+function notifyPush(userId) {
+  const u = db.users[userId];
+  if (!u || !u.pushSubs || !u.pushSubs.length) return;
+  if (isOnline(userId)) return;            /* и так видит */
+  for (const sub of u.pushSubs) {
+    if (sub.dead) continue;
+    pushWeb(sub, 3600);
+  }
+  u.pushSubs = u.pushSubs.filter(s => !s.dead);
+}
+
+route('POST', '/api/push/subscribe', async (req, res, body, user) => {
+  const sub = body.sub;
+  if (!sub || !sub.endpoint) return send(res, 400, { error: 'Нет подписки' });
+  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== sub.endpoint);
+  user.pushSubs.push({ endpoint: String(sub.endpoint).slice(0, 500), time: now() });
+  if (user.pushSubs.length > 5) user.pushSubs = user.pushSubs.slice(-5);
+  save();
+  send(res, 200, { ok: true });
+});
+
+route('POST', '/api/push/unsubscribe', async (req, res, body, user) => {
+  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== body.endpoint);
+  save();
+  send(res, 200, { ok: true });
+});
+
+/* Что показать в уведомлении: последнее непрочитанное */
+route('POST', '/api/push/peek', async (req, res, body, user) => {
+  let best = null;
+  for (const c of Object.values(db.chats)) {
+    if (!c.members.includes(user.id)) continue;
+    const readAt = (user.reads || {})[c.id] || 0;
+    for (const m of c.msgs) {
+      if (m.from === user.id || m.deleted || m.time <= readAt) continue;
+      if (!best || m.time > best.time) {
+        const author = db.users[m.from];
+        best = {
+          time: m.time,
+          chatId: c.id,
+          name: c.service ? 'Newchat' : ((author && author.name) || 'Сообщение'),
+          text: m.enc ? 'Зашифрованное сообщение'
+            : (m.text || (m.media ? 'Вложение' : '')).slice(0, 120)
+        };
+      }
+    }
+  }
+  send(res, 200, { msg: best });
+});
+
+route('POST', '/api/help/ask', async (req, res, body, user) => {
+  const q = String(body.q || '').toLowerCase().slice(0, 300);
+  if (!q) return send(res, 400, { error: 'Пустой вопрос' });
+  let best = null, score = 0;
+  for (const t of HELP_TOPICS) {
+    const hits = t.k.filter(w => q.includes(w)).length;
+    if (hits > score) { score = hits; best = t; }
+  }
+  if (best) return send(res, 200, { answer: best.a });
+  send(res, 200, {
+    answer: 'Не нашёл точного ответа. Спросите про биржу, жалобы на скам и докс, секретные чаты, звонки, кружки и голосовые, обои и шрифты, премиум, каналы и ботов. Если вопрос сложнее — напишите разработчику: тапните плашку DEV рядом с его именем.'
+  });
+});
+
+route('POST', '/api/profile/style', async (req, res, body, user) => {
+  /* Оформление профиля: обложка и подпись. Часть — только с премиумом. */
+  if (body.cover !== undefined) {
+    const n = Math.max(0, Math.min(11, Number(body.cover) || 0));
+    if (n > 5 && !isPremium(user)) return send(res, 403, { error: 'Эта обложка доступна с премиумом' });
+    user.cover = n;
+  }
+  if (body.bio !== undefined) {
+    user.bio = String(body.bio || '').slice(0, 140);
+  }
+  if (body.icon !== undefined) {
+    if (!isPremium(user)) return send(res, 403, { error: 'Смена иконки доступна с премиумом' });
+    user.icon = String(body.icon || '').slice(0, 20);
+  }
+  save();
+  send(res, 200, { state: fullState(user) });
+});
+
 route('POST', '/api/profile/settings', async (req, res, body, user) => {
   if (typeof body.anon === 'boolean') user.anon = body.anon;
   save();
@@ -2211,7 +2630,7 @@ async function handleBotApi(req, res, urlPath, body) {
   chat.msgs.push(msg);
   save();
   const peerId = chat.members.find(x => x !== bot.id);
-  if (peerId) push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } });
+  if (peerId) { push(peerId, { type: 'message', chatId: chat.id, message: { id: msg.id, text, time: msg.time, out: false } }); notifyPush(peerId); }
   send(res, 200, { ok: true, messageId: msg.id });
 }
 
@@ -2266,6 +2685,7 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
     if (!spare) return send(res, 400, { error: 'Это ваш единственный юзернейм — сначала займите запасной, он станет основным' });
   }
   if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле — так покупатели знают, с кем имеют дело' });
+  if (user.reportBlockUntil && user.reportBlockUntil > now()) return send(res, 403, { error: 'Биржа закрыта на 2 суток после подачи жалобы' });
   if ((user.trust || 0) < SELL_MIN_TRUST) return send(res, 400, { error: 'Продавать можно с доверием от ' + SELL_MIN_TRUST + '%' });
   if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты в «Сделках» — их увидит покупатель' });
 
@@ -2328,6 +2748,8 @@ route('GET', '/api/config', async (req, res) => {
     sms: SMS_ENABLED,
     mail: MAIL_ENABLED,
     team: DEV_USERNAMES.concat(CODEV_USERNAMES).slice(0, 6),
+    ice: iceServers(),
+    vapid: VAPID_PUBLIC,
     maxMb: MAX_MB,
     videoDays: MEDIA_KEEP_DAYS,
     deal: { payHours: DEAL.payHours, confirmDays: DEAL.confirmDays }
@@ -2436,6 +2858,25 @@ const server = http.createServer(async (req, res) => {
       console.error(e);
       return send(res, 500, { error: 'Ошибка сервера' });
     }
+  }
+
+  /* Протокол переписки: открывается по личной ссылке из письма */
+  if (url.startsWith('/report/') && req.method === 'GET') {
+    const num = Number(url.split('/')[2]);
+    const t = (req.url.split('?')[1] || '').replace(/^t=/, '');
+    const r = db.reports.find(x => x.num === num);
+    if (!r || !r.token || r.token !== t) {
+      res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end('<meta charset="utf-8"><h2 style="font-family:Arial">Протокол не найден</h2>' +
+        '<p style="font-family:Arial">Проверьте ссылку целиком, вместе с кодом после знака вопроса.</p>');
+    }
+    if (now() - r.time > 30 * 86400e3) {
+      res.writeHead(410, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end('<meta charset="utf-8"><h2 style="font-family:Arial">Срок хранения истёк</h2>' +
+        '<p style="font-family:Arial">Протокол доступен 30 дней с момента подачи жалобы.</p>');
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(reportHtml(r));
   }
 
   const key = req.method + ' ' + url;
