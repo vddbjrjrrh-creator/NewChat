@@ -484,8 +484,8 @@ function fullState(user) {
       bio: user.bio || '',
       gifts: myGifts(user.id),
       music: user.music || null,
-      ringtone: user.ringtone || null,
-      msgSound: user.msgSound || null,
+      ringtone: user.ringtone ? { name: user.ringtone.name } : null,
+      msgSound: user.msgSound ? { name: user.msgSound.name } : null,
       coverImg: user.coverImg || '',
       icon: user.icon || '',
       invites: user.inviteCount || 0,
@@ -2410,290 +2410,125 @@ route('POST', '/api/chats/secret', async (req, res, body, user) => {
 
 /* Помощник: отвечает на вопросы про само приложение */
 const HELP_TOPICS = [
-  { k: ['биржа', 'юзернейм', 'продать', 'купить', 'лот'],
-    a: 'Биржа юзернеймов — вкладка «Биржа». Чтобы продать: «Мои» → кнопка «Продать» у нужного юзернейма, укажите цену. Чтобы купить: вкладка «Каталог» → выберите лот → «Купить». Для торговли нужен привязанный телефон: так покупатели знают, с кем имеют дело. Деньги идут напрямую продавцу, юзернейм передаётся после подтверждения.' },
-  { k: ['скам', 'докс', 'жалоб', 'обман', 'мошенн', 'полиц'],
-    a: 'Если вас обманули: откройте чат → меню «⋮» → «Пожаловаться» → выберите «Скам» или «Докс» → укажите почту. Мы соберём протокол переписки со всеми сообщениями, включая удалённые, и данными собеседника. Придёт ссылка: сохраните страницу в PDF и подайте заявление в полицию — инструкция внутри протокола. После жалобы 2 суток нельзя подавать новые и закрыта биржа.' },
-  { k: ['секрет', 'шифр', 'приватн', 'безопасн'],
-    a: 'Секретный чат: меню чата → «Секретный чат». Сообщения шифруются прямо на телефонах, сервер видит только набор символов. Но пожаловаться в таком чате нельзя — слепка переписки не останется. Ключ хранится в памяти телефона: если очистить данные приложения, старые секретные сообщения не восстановить.' },
-  { k: ['звонок', 'позвонить', 'связь', 'не соединя'],
-    a: 'Звонок — кнопка трубки в шапке чата. Если соединение не устанавливается, попробуйте выключить VPN или перейти на Wi-Fi: некоторые сети не пропускают прямое соединение. Во время звонка можно включить видео и переключить громкую связь.' },
-  { k: ['премиум', 'подписк'],
-    a: 'Премиум даёт: сторис, больше слотов для юзернеймов, особые обложки профиля. Сейчас выдаётся вручную командой — напишите разработчику через плашку DEV рядом с именем.' },
-  { k: ['кружок', 'видео', 'голосов', 'запис'],
-    a: 'Голосовое: зажмите кнопку микрофона, отпустите — отправится. Свайп вверх закрепляет запись, тогда можно отпустить палец. Кружок: короткий тап по той же кнопке переключает её в режим кружка, дальше так же зажимаете. Видео и файлы — через скрепку и галерею, до 10 МБ. Видео хранится 7 дней.' },
-  { k: ['фон', 'обои', 'тема', 'шрифт', 'внешн', 'тёмн', 'темн'],
-    a: 'Обои чата: меню чата → «Обои чата». Можно поставить себе или предложить обоим — собеседник получит запрос. Шрифт, обложка профиля и тёмная тема — в профиле, раздел «Внешний вид».' },
-  { k: ['удал', 'аккаунт', 'выйти', 'выход'],
-    a: 'Выйти из аккаунта: профиль → «Выйти». Сессия при этом удаляется на сервере. Удаление аккаунта целиком пока делается через обращение к разработчику — плашка DEV рядом с именем.' },
-  { k: ['канал', 'бот'],
-    a: 'Канал создаётся через кнопку «плюс» на вкладке «Чаты». Писать в канале может только владелец. Боты создаются там же — вы получите токен для подключения своей программы.' },
-  { k: ['сервер', 'данные', 'хранит', 'где'],
-    a: 'Подробно расписано в профиле → «О сервисе»: где стоят серверы, что храним, сколько живут видео и какие есть ограничения. Если коротко: приложение на GitHub Pages, сервер на Render, база — Neon PostgreSQL.' }
+  { t: 'биржа-продажа', k: ['продать', 'выставить', 'продажа', 'цена', 'лот', 'сколько стоит'],
+    a: 'Продать юзернейм: вкладка «Биржа» → «Мои» → «Юзернеймы» → кнопка «Продать» → укажите цену. Карточку продать так же, но в подвкладке «Карточки». Нужен привязанный телефон и реквизиты для получения денег — иначе покупателю некуда переводить.' },
+  { t: 'биржа-покупка', k: ['купить', 'покупка', 'приобрести', 'каталог', 'взять'],
+    a: 'Купить: «Биржа» → «Каталог». Сверху фильтры: всё, юзернеймы, карточки, и сортировка по цене или редкости. Нажимаете лот → открывается сделка → переводите деньги продавцу по его реквизитам → отмечаете «Оплатил» → продавец подтверждает, и покупка ваша.' },
+  { t: 'сделка', k: ['сделк', 'перевод', 'оплат', 'реквизит', 'деньги', 'не пришл', 'обманул на бирже'],
+    a: 'Сделки видно во вкладке «Сделки». Порядок: покупатель переводит по реквизитам продавца и жмёт «Оплатил», продавец получает деньги и жмёт «Подтвердить» — лот переходит покупателю. Если продавец пропал, через 7 дней передача происходит сама. Если обманули — откройте спор в сделке или подайте жалобу «Скам».' },
+  { t: 'жалоба', k: ['скам', 'докс', 'жалоб', 'обман', 'мошенн', 'полиц', 'угроз', 'слил', 'протокол', 'заявлен',
+        'кинул', 'развел', 'развёл', 'украл', 'не отдал', 'забрал деньги', 'шантаж', 'вымога'],
+    a: 'Жалоба: откройте чат → меню «⋮» → «Пожаловаться» → «Скам» или «Докс». Соберём протокол переписки со всеми удалёнными сообщениями и данными аккаунта, откроется ссылкой прямо в приложении — сохраняете в PDF через «Поделиться → Печать». Внутри инструкция, куда подать заявление. Телефон нарушителя в протоколе скрыт: полные данные администрация отдаёт только по запросу полиции по номеру протокола. После жалобы 2 суток нельзя подавать новые и закрыта биржа.' },
+  { t: 'секретный', k: ['секрет', 'шифр', 'приватн', 'e2e', 'ключ', 'прочитать сообщения'],
+    a: 'Секретный чат: меню чата → «Секретный чат». Сообщения шифруются прямо на телефонах, сервер видит только набор символов. Жалобы в таком чате недоступны — слепка не останется. Ключ живёт в памяти телефона: очистите данные приложения — старые секретные сообщения не восстановить. Если пишет «у собеседника нет ключа» — попросите его зайти в приложение, ключ создастся сам.' },
+  { t: 'звонки', k: ['звон', 'позвон', 'дозвон', 'трубк', 'соединя', 'громк', 'динамик', 'видеозвон', 'вызов'],
+    a: 'Звонок — кнопка трубки в шапке чата. В звонке есть видео, микрофон и громкая связь. Если бесконечно идёт «Соединение» — сеть не пропускает: выключите VPN или перейдите на Wi-Fi. Через 25 секунд приложение само скажет об этом. Рингтон меняется в «Настройки» → «Внешний вид» → «Рингтон звонка».' },
+  { t: 'голосовые', k: ['голосов', 'микрофон', 'кружок', 'кружк', 'записать', 'видеосообщ'],
+    a: 'Голосовое: зажмите микрофон, отпустите — уйдёт. Свайп вверх закрепляет запись, тогда палец можно убрать и отправить стрелкой. Кружок: короткий тап по микрофону переключает его в режим кружка, дальше так же зажимаете. До 60 секунд.' },
+  { t: 'медиа', k: ['фото', 'видео', 'файл', 'скрепк', 'картинк', 'документ', 'хранят', 'пропал', 'исчезл', 'удалились'],
+    a: 'Фото и видео — кнопка галереи, любые файлы — скрепка. До 10 МБ на файл. Видео, кружки и файлы хранятся 7 дней, потом удаляются, чтобы не забивать базу. Фото, текст и голосовые остаются навсегда.' },
+  { t: 'оформление', k: ['обои', 'фон', 'тема', 'тёмн', 'темн', 'шрифт', 'внешн', 'цвет', 'обложк', 'аватар',
+        'ночн', 'светл', 'оформлен', 'дизайн', 'вид'],
+    a: 'Обои чата: меню чата → «Обои чата», можно поставить себе или предложить обоим — собеседник подтвердит. Шрифт, тёмная тема, обложка профиля, эффекты и звуки — в «Настройки» → «Внешний вид». Аватар меняется тапом по нему в профиле.' },
+  { t: 'музыка', k: ['музык', 'трек', 'песн', 'плеер', 'mp3', 'слушать'],
+    a: 'Музыка в профиле: «Настройки» → «Внешний вид» → «Музыка в профиле» → «Выбрать трек». До 12 МБ. Трек виден всем, кто откроет ваш профиль: можно послушать, замедлить или ускорить, поставить на повтор и скачать. В режиме суперанонимности музыка скрыта.' },
+  { t: 'премиум', k: ['премиум', 'подписк', 'platinum', 'плати', 'звёзд'],
+    a: 'Премиум даёт сторис, больше слотов для юзернеймов и особые обложки профиля. Сейчас выдаётся вручную командой — напишите разработчику, тапнув плашку DEV рядом с его именем.' },
+  { t: 'карточки', k: ['карточк', 'nft', 'коллекц', 'devcoin', 'редкость', 'монет', 'подарок'],
+    a: 'Коллекционные карточки нельзя купить за деньги — их выдают за события, приглашения и заслуги. Они лежат в профиле, тап открывает карточку: там номер, тираж, редкость и рыночная цена, если такие уже продавали. Перепродать можно на бирже: «Мои» → «Карточки» → «Продать». Тираж у каждой ограничен, новые не выпускаются.' },
+  { t: 'юзернеймы', k: ['юзернейм', 'ник', 'имя', 'занять', 'слот', 'сменить'],
+    a: 'Юзернеймы — «Биржа» → «Мои». Свободный можно занять кнопкой «Занять юзернейм». Основной помечен «осн.» — его тоже можно продать или удалить, но только если есть запасной: он станет новым основным. Слотов по умолчанию 3, с премиумом больше.' },
+  { t: 'каналы', k: ['канал', 'бот', 'создать канал', 'подписч', 'токен'],
+    a: 'Канал и бота создаёте кнопкой «плюс» на вкладке «Чаты». В канале пишет только владелец. Боту выдаётся токен — подключаете к нему свою программу, как в телеге.' },
+  { t: 'аккаунт', k: ['выйти', 'выход', 'удалить аккаунт', 'сменить телефон', 'привязать', 'вход', 'войти'],
+    a: 'Вход по Telegram или по номеру. Если вошли по почте, телефон привязывается в профиле — без него закрыта биржа. Выйти: «Настройки» → «Выйти», сессия удаляется на сервере. Удаление аккаунта целиком — через обращение к разработчику.' },
+  { t: 'уведомления', k: ['уведомлен', 'звук сообщ', 'рингтон', 'не приходят', 'тишин', 'беззвучн'],
+    a: 'Звуки настраиваются в «Настройки» → «Внешний вид»: рингтон звонка, звук уведомлений, можно загрузить свои mp3 — рингтон до 3 минут, звук сообщения до 20 секунд. Уведомления при закрытом приложении работают, только если открыть сайт в Chrome и добавить на главный экран; в APK они недоступны.' },
+  { t: 'приватность', k: ['анонимн', 'скрыть', 'приватност', 'заблокир', 'блок', 'видно телефон'],
+    a: 'Суперанонимность включается в «Настройках»: вас не найдут поиском, музыка скрывается. Телефон другим людям не показывается никогда — только вам в своём профиле. Заблокировать собеседника можно в меню чата, тогда он не сможет писать.' },
+  { t: 'автоудаление', k: ['автоудален', 'исчеза', 'таймер', 'удалить сообщ', 'очистить истор'],
+    a: 'Автоудаление: меню чата → «Автоудаление», по кругу выкл → 1 час → 24 часа. Сообщения стираются сами у обоих. «Очистить историю» убирает переписку только у вас. Своё сообщение удаляется долгим нажатием на нём.' },
+  { t: 'проблемы', k: ['не работает', 'виснет', 'ошибк', 'баг', 'лаг', 'не отправ', 'нет связи', 'долго',
+        'тормоз', 'зависа', 'глюч', 'медленн', 'не грузит', 'белый экран', 'перезагру'],
+    a: 'Если пишет «Сервер просыпается» — подождите до минуты: бесплатный сервер засыпает без нагрузки, приложение само повторит запрос. Если что-то не обновилось, потяните экран или перезайдите во вкладку. Обновление приложения: «Настройки» → «Проверить обновления». Не помогло — напишите разработчику через плашку DEV.' },
+  { t: 'разработчик', k: ['разработчик', 'написать вам', 'связаться', 'поддержк', 'команд', 'админ', 'помощь'],
+    a: 'Написать команде: тапните оранжевую плашку DEV или голубую CO-DEV рядом с именем разработчика — откроется меню с темами: скам, докс, угрозы, ошибка в приложении. Выбираете тему, и сразу открывается чат с ним.' }
 ];
 
-/* ===== PUSH-УВЕДОМЛЕНИЯ =====
-   Работают, когда приложение закрыто. Только для установки через браузер
-   (Chrome → «Добавить на главный экран»), WebView такое не поддерживает. */
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'BGA17iH6l25CJBuj94BkyOxiSjqU9Y3DMSTe-yrCnYBkQ6zWVngCz_oRu53O7tNNFknpLfU5NmLYpSvHCXYDCLs';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'vOrmFqu0vvr-cYlc_MQPqu7dn-D3zul3HCvwnFSlO7I';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:newchat@example.com';
-
-function b64url(buf) {
-  return Buffer.from(buf).toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function vapidJwt(audience) {
-  const header = b64url(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
-  const payload = b64url(JSON.stringify({
-    aud: audience,
-    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
-    sub: VAPID_SUBJECT
-  }));
-  const data = header + '.' + payload;
-
-  const key = crypto.createPrivateKey({
-    key: { kty: 'EC', crv: 'P-256', d: VAPID_PRIVATE,
-           x: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(1, 33)),
-           y: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(33, 65)) },
-    format: 'jwk'
-  });
-  const der = crypto.sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' });
-  return data + '.' + b64url(der);
-}
-
-function pushWeb(sub, ttl) {
-  return new Promise(resolve => {
-    try {
-      const https = require('https');
-      const { URL } = require('url');
-      const u = new URL(sub.endpoint);
-      const jwt = vapidJwt(u.origin);
-      const req = https.request({
-        hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
-        headers: {
-          'TTL': String(ttl || 3600),
-          'Content-Length': 0,
-          'Urgency': 'high',
-          'Authorization': 'vapid t=' + jwt + ', k=' + VAPID_PUBLIC
+/* Простое сопоставление: считаем совпавшие слова и берём лучшую тему.
+   Работает на сервере, без внешних сервисов — бесплатно. */
+function findTopic(q) {
+  /* Сравниваем по началу слов, иначе «вклЮЧИТь» ловится на ключ «ключ» */
+  const words = q.split(/\s+/).filter(Boolean);
+  let best = null, bestScore = 0;
+  for (const t of HELP_TOPICS) {
+    let score = 0;
+    for (const key of t.k) {
+      const parts = key.split(' ');
+      if (parts.length > 1) {
+        if (q.includes(key)) score += 4;
+        continue;
+      }
+      for (const w of words) {
+        if (w.startsWith(key) || key.startsWith(w) && w.length >= 4) {
+          score += key.length > 5 ? 3 : 2;
+          break;
         }
-      }, res => {
-        if (res.statusCode === 404 || res.statusCode === 410) sub.dead = true;
-        res.resume();
-        resolve(res.statusCode);
-      });
-      req.setTimeout(8000, () => { req.destroy(); resolve(0); });
-      req.on('error', () => resolve(0));
-      req.end();
-    } catch (e) { resolve(0); }
-  });
-}
-
-/* Шлём «звоночек» — само содержимое приложение заберёт само */
-/* Биржа изменилась. Рассылаем короткий сигнал не чаще раза в 5 секунд,
-   чтобы не устроить лавину запросов на бесплатном сервере. */
-let lastMarketPing = 0;
-function marketChanged() {
-  if (now() - lastMarketPing < 5000) return;
-  lastMarketPing = now();
-  for (const u of Object.values(db.users)) {
-    if (u.isBot || !isOnline(u.id)) continue;
-    push(u.id, { type: 'market' });
-  }
-}
-
-function notifyPush(userId) {
-  const u = db.users[userId];
-  if (!u || !u.pushSubs || !u.pushSubs.length) return;
-  if (isOnline(userId)) return;            /* и так видит */
-  for (const sub of u.pushSubs) {
-    if (sub.dead) continue;
-    pushWeb(sub, 3600);
-  }
-  u.pushSubs = u.pushSubs.filter(s => !s.dead);
-}
-
-route('POST', '/api/push/subscribe', async (req, res, body, user) => {
-  const sub = body.sub;
-  if (!sub || !sub.endpoint) return send(res, 400, { error: 'Нет подписки' });
-  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== sub.endpoint);
-  user.pushSubs.push({ endpoint: String(sub.endpoint).slice(0, 500), time: now() });
-  if (user.pushSubs.length > 5) user.pushSubs = user.pushSubs.slice(-5);
-  save();
-  send(res, 200, { ok: true });
-});
-
-route('POST', '/api/push/unsubscribe', async (req, res, body, user) => {
-  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== body.endpoint);
-  save();
-  send(res, 200, { ok: true });
-});
-
-/* Что показать в уведомлении: последнее непрочитанное */
-route('POST', '/api/push/peek', async (req, res, body, user) => {
-  let best = null;
-  for (const c of Object.values(db.chats)) {
-    if (!c.members.includes(user.id)) continue;
-    const readAt = (user.reads || {})[c.id] || 0;
-    for (const m of c.msgs) {
-      if (m.from === user.id || m.deleted || m.time <= readAt) continue;
-      if (!best || m.time > best.time) {
-        const author = db.users[m.from];
-        best = {
-          time: m.time,
-          chatId: c.id,
-          name: c.service ? 'Newchat' : ((author && author.name) || 'Сообщение'),
-          text: m.enc ? 'Зашифрованное сообщение'
-            : (m.text || (m.media ? 'Вложение' : '')).slice(0, 120)
-        };
       }
     }
+    if (score > bestScore) { bestScore = score; best = t; }
   }
-  send(res, 200, { msg: best });
-});
-
-/* ===== КОЛЛЕКЦИОННЫЕ КАРТОЧКИ ===== */
-const GIFT_TYPES = {
-  devcoin: {
-    name: 'DevCoin',
-    total: 2,
-    rarity: 'Легендарная',
-    rarityNum: 5,
-    desc: 'Монета создателей Newchat. Отчеканено две — по числу тех, кто писал этот мессенджер с нуля.',
-    devOnly: true
-  }
-};
-
-function myGifts(userId) {
-  return (db.gifts || [])
-    .filter(g => g.owner === userId)
-    .map(g => {
-      const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
-      const sales = (db.giftSales || []).filter(s => s.type === g.type);
-      const last = sales.length ? sales[sales.length - 1] : null;
-      return {
-        id: g.id, type: g.type, num: g.num,
-        forSale: !!g.forSale, price: g.price || 0, frozen: !!g.frozen,
-        name: t.name || g.type, total: t.total || 0,
-        rarity: t.rarity || '', rarityNum: t.rarityNum || 1,
-        desc: t.desc || '',
-        issued: g.time,
-        lastPrice: last ? last.price : 0,
-        lastSaleAt: last ? last.time : 0,
-        salesCount: sales.length
-      };
-    });
+  return { best, score: bestScore };
 }
-
-/* Монета достаётся всем, кто записан разработчиком — даже если он ещё не заходил */
-function grantDevCoin(user) {
-  db.gifts = db.gifts || [];
-  let changed = false;
-
-  /* Ищем всех девов среди зарегистрированных */
-  const devs = Object.values(db.users).filter(u => !u.isBot && (isDev(u) || isCodev(u)));
-  for (const d of devs) {
-    if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
-    const minted = db.gifts.filter(g => g.type === 'devcoin').length;
-    if (minted >= GIFT_TYPES.devcoin.total) break;
-    db.gifts.push({ id: uid(), type: 'devcoin', num: minted + 1, owner: d.id, time: now() });
-    changed = true;
-    serviceMessage(d.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
-    push(d.id, { type: 'state' });
-  }
-  if (changed) save();
-}
-
-route('GET', '/api/market', async (req, res, body, user) => {
-  /* Легковесный ответ: только лоты. Полное состояние тащит переписку
-     с фото и голосовыми — на бесплатном сервере это его убивает. */
-  send(res, 200, {
-    market: marketList(user.id),
-    giftMarket: giftMarket(user.id),
-    gifts: myGifts(user.id),
-    usernames: myUsernames(user.id),
-    deals: Object.values(db.deals)
-      .filter(d => d.seller === user.id || d.buyer === user.id)
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 20)
-      .map(d => dealView(d, user.id))
-  });
-});
-
-route('POST', '/api/gifts/sell', async (req, res, body, user) => {
-  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
-  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
-  if (g.frozen) return send(res, 400, { error: 'Карточка в сделке' });
-  if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле' });
-  if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты для получения денег' });
-  const price = Math.round(Number(body.price) || 0);
-  if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
-  if (price > 5000000) return send(res, 400, { error: 'Слишком большая цена' });
-  g.forSale = true;
-  g.price = price;
-  save();
-  marketChanged();
-  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
-});
-
-route('POST', '/api/gifts/unsell', async (req, res, body, user) => {
-  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
-  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
-  if (g.frozen) return send(res, 400, { error: 'Идёт сделка — снять нельзя' });
-  g.forSale = false;
-  g.price = 0;
-  save();
-  marketChanged();
-  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
-});
-
-route('POST', '/api/gifts/buy', async (req, res, body, user) => {
-  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
-  if (!g || !g.forSale) return send(res, 404, { error: 'Карточка не продаётся' });
-  if (g.owner === user.id) return send(res, 400, { error: 'Это ваша карточка' });
-  if (g.frozen) return send(res, 400, { error: 'По карточке уже идёт сделка' });
-  if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
-
-  const seller = db.users[g.owner];
-  if (!seller || !seller.requisites) return send(res, 400, { error: 'У продавца нет реквизитов' });
-
-  const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
-  const deal = {
-    id: uid(), kind: 'gift', giftId: g.id,
-    username: (t.name || g.type) + ' №' + g.num,
-    seller: seller.id, buyer: user.id,
-    price: g.price, status: 'pay',
-    createdAt: now(), requisites: seller.requisites
-  };
-  db.deals[deal.id] = deal;
-  g.frozen = deal.id;
-  save();
-
-  serviceMessage(seller.id, 'Покупатель хочет забрать вашу карточку «' + deal.username + '» за ' + g.price + ' ₽. Ожидайте перевод.');
-  push(seller.id, { type: 'state' });
-  push(user.id, { type: 'state' });
-  marketChanged();
-  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
-});
-
-route('POST', '/api/gifts/list', async (req, res, body, user) => {
-  grantDevCoin(user);
-  send(res, 200, { gifts: myGifts(user.id) });
-});
 
 route('POST', '/api/help/ask', async (req, res, body, user) => {
-  const q = String(body.q || '').toLowerCase().slice(0, 300);
-  if (!q) return send(res, 400, { error: 'Пустой вопрос' });
-  let best = null, score = 0;
-  for (const t of HELP_TOPICS) {
-    const hits = t.k.filter(w => q.includes(w)).length;
-    if (hits > score) { score = hits; best = t; }
+  const raw = String(body.q || '').toLowerCase().slice(0, 300);
+  if (!raw) return send(res, 400, { error: 'Пустой вопрос' });
+  const q = raw.replace(/[^а-яёa-z0-9 ]/gi, ' ');
+
+  const { best, score } = findTopic(q);
+  if (best && score >= 2) {
+    return send(res, 200, { answer: best.a });
   }
-  if (best) return send(res, 200, { answer: best.a });
+
+  /* Не поняли точно — отвечаем осмысленно, а не отпиской */
+  const hints = [];
+  if (/(как|где|что|куда|почему|зачем|можно|умеет)/.test(q)) {
+    const guesses = HELP_TOPICS
+      .map(t => ({ t, s: t.k.filter(w => q.split(/\s+/).some(x => x.startsWith(w.slice(0, 4)))).length }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 2);
+    for (const g of guesses) hints.push(g.t.a);
+  }
+
+  if (hints.length) {
+    return send(res, 200, {
+      answer: 'Кажется, вопрос про это:\n\n' + hints.join('\n\n') +
+        '\n\nЕсли не угадал — спросите иначе или напишите разработчику через плашку DEV.'
+    });
+  }
+
   send(res, 200, {
-    answer: 'Не нашёл точного ответа. Спросите про биржу, жалобы на скам и докс, секретные чаты, звонки, кружки и голосовые, обои и шрифты, премиум, каналы и ботов. Если вопрос сложнее — напишите разработчику: тапните плашку DEV рядом с его именем.'
+    answer: 'Не нашёл точного ответа, но вот что я умею объяснить:\n\n' +
+      '• Биржа: как продать и купить юзернейм или карточку\n' +
+      '• Сделки: перевод, реквизиты, споры\n' +
+      '• Жалобы: скам, докс, протокол для полиции\n' +
+      '• Секретные чаты и шифрование\n' +
+      '• Звонки, голосовые, кружки\n' +
+      '• Фото, видео, файлы и сроки хранения\n' +
+      '• Обои, шрифты, тёмная тема, музыка в профиле\n' +
+      '• Премиум, каналы, боты, юзернеймы\n' +
+      '• Уведомления и звуки\n\n' +
+      'Спросите про любое из этого своими словами. Если вопрос не про приложение — напишите разработчику: тапните плашку DEV рядом с его именем.'
   });
+});
+
+route('POST', '/api/profile/sound', async (req, res, body, user) => {
+  /* Сам звук отдаём отдельно и только когда он нужен */
+  const kind = body.kind === 'msg' ? 'msgSound' : 'ringtone';
+  const snd = user[kind];
+  send(res, 200, { data: snd ? snd.data : '', name: snd ? snd.name : '' });
 });
 
 route('POST', '/api/profile/style', async (req, res, body, user) => {
