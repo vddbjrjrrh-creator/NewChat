@@ -1270,9 +1270,9 @@ body{
       <div class="confirm-box">
         <div class="big-ic red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v4"/><circle cx="12" cy="17.5" r=".5" fill="currentColor"/></svg></div>
         <h3>Жалоба: <span id="report-kind">скам</span></h3>
-        <p>Соберём полный протокол переписки с «<span id="report-target"></span>» — со всеми удалёнными сообщениями и данными аккаунта. Документ придёт вам, чтобы подать заявление в полицию.</p>
+        <p>Соберём полный протокол переписки с «<span id="report-target"></span>» — со всеми удалёнными сообщениями и данными аккаунта. Документ откроется прямо здесь, его можно сохранить в PDF.</p>
         <div class="field" style="margin:4px 0 10px">
-          <input type="email" id="report-mail" placeholder="Почта для протокола" autocapitalize="off" inputmode="email">
+          <input type="email" id="report-mail" placeholder="Почта (необязательно)" autocapitalize="off" inputmode="email">
         </div>
         <div class="law-note" style="margin-bottom:12px">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
@@ -1426,6 +1426,8 @@ body{
         <div><b>Верификация</b><span>Для компаний, известных людей и разработчиков</span></div>
       </div>
 
+      <div class="glass-card glow" id="my-music" style="display:none;margin:8px 16px;padding:11px 14px"></div>
+
       <div class="trust-card glass-card">
         <div class="top">
           <b>Батарейка доверия</b>
@@ -1541,6 +1543,12 @@ body{
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurge()">Очистить вложения</button>
       </div>
       <div id="dev-info" class="conv-preview" style="display:none;text-align:left;font-size:.78rem;white-space:pre-line"></div>
+      <div class="w-section" style="margin-top:14px">Данные по протоколу (для запроса полиции)</div>
+      <div class="field" style="margin:8px 0">
+        <input type="number" class="txt" placeholder="Номер протокола, например 4001" id="rd-num" inputmode="numeric">
+      </div>
+      <button class="btn ghost" onclick="devReportData()">Показать полные данные</button>
+
       <div class="w-section" style="margin-top:14px">Выдать коллекционную карточку</div>
       <div class="field" style="margin:8px 0">
         <input type="text" class="txt" placeholder="Код карточки латиницей (devcoin, firstblood)" id="gc-type" autocapitalize="off">
@@ -1671,7 +1679,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 28;
+const APP_VERSION = 30;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2914,6 +2922,25 @@ function gcRar(rarity,rarityNum){
   gcRarity={rarity,rarityNum};
   toast('Редкость: '+rarity);
 }
+async function devReportData(){
+  const num=document.getElementById('rd-num').value.trim();
+  if(!num){toast('Введите номер протокола');return}
+  try{
+    const r=await api('/api/dev/report-data',{num});
+    const d=r.data;
+    const el=document.getElementById('dev-info');
+    el.style.display='block';
+    el.textContent=
+      'ПРОТОКОЛ №'+d.num+' ('+d.kind+')\n'+
+      'Подан: '+new Date(d.time).toLocaleString('ru')+' · сообщений: '+d.messages+' · открывали: '+d.opened+'\n\n'+
+      'НА КОГО:\n'+d.against.name+' @'+d.against.username+'\n'+
+      'Телефон: '+d.against.phone+'\nПочта: '+(d.against.email||'—')+'\n'+
+      'Аккаунт создан: '+(d.against.created?new Date(d.against.created).toLocaleDateString('ru'):'—')+'\n'+
+      'Доверие: '+d.against.trust+'% · бан: '+(d.against.banned?'да':'нет')+'\n\n'+
+      'КТО ПОДАЛ:\n'+d.author.name+' @'+d.author.username+'\n'+
+      'Телефон: '+d.author.phone+'\nВсего жалоб от него: '+d.author.reports;
+  }catch(e){}
+}
 async function devGiftCard(){
   const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
   const type=document.getElementById('gc-type').value.trim();
@@ -3552,9 +3579,9 @@ function showReportDone(r){
       '<div style="font-size:2.4rem">📄</div>'+
       '<b style="font-size:1.05rem">Протокол №'+r.num+' готов</b>'+
       '<p style="font-size:.85rem;color:var(--ink-2);margin-top:6px">'+
-      (r.mailed?'Ссылка отправлена вам на почту.':'Почта на сервере не настроена — откройте протокол по кнопке.')+
+      (r.mailed?'Ссылка продублирована вам на почту.':'Нажмите кнопку ниже — документ откроется, дальше «Поделиться» → «Печать» → «Сохранить как PDF».')+
       '</p></div>'+
-    '<button class="btn" onclick="window.open(\''+r.link+'\',\'_blank\')">Открыть протокол</button>'+
+    '<button class="btn" onclick="window.open(\''+r.link+'\',\'_blank\')">Открыть и сохранить протокол</button>'+
     '<button class="btn ghost" onclick="copyText(\''+r.link+'\');toast(\'Ссылка скопирована\')">Скопировать ссылку</button>'+
     '<div class="law-note" style="margin-top:12px">'+
       '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>'+
@@ -4429,17 +4456,30 @@ function renderLook(){
   const t=document.getElementById('tgl-fx');
   if(t)t.classList.toggle('on',fxOn());
 }
-function musicPlayer(m,owner){
+function musicPlayer(m,owner,compact){
   if(!m)return '';
-  return '<div style="display:flex;align-items:center;gap:12px">'+
-    '<button class="icon-btn" onclick="event.stopPropagation();toggleMusic(this,\''+owner+'\')" style="width:44px;height:44px;background:var(--accent);color:#fff;flex:none;border-radius:50%">'+
-      '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5.5v13l11-6.5z"/></svg></button>'+
+  return '<div style="display:flex;align-items:center;gap:11px">'+
+    '<button class="icon-btn" id="mplay-'+owner+'" onclick="event.stopPropagation();toggleMusic(this,\''+owner+'\')" style="width:42px;height:42px;background:var(--accent);color:#fff;flex:none;border-radius:50%">'+
+      '<svg viewBox="0 0 24 24" fill="currentColor" width="19" height="19"><path d="M8 5.5v13l11-6.5z"/></svg></button>'+
     '<div style="flex:1;min-width:0">'+
-      '<b style="font-size:.88rem;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.name)+'</b>'+
-      '<span style="font-size:.72rem;color:var(--ink-2)">'+fmtSize(m.size||0)+'</span></div>'+
+      '<b style="font-size:.86rem;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.name)+'</b>'+
+      '<div style="height:3px;border-radius:2px;background:var(--edge);margin-top:5px;overflow:hidden">'+
+        '<div id="mbar-'+owner+'" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div></div></div>'+
+    '<button class="pill-btn sell" id="mspd-'+owner+'" onclick="event.stopPropagation();cycleSpeed(\''+owner+'\')" style="font-size:.72rem;min-width:44px">1×</button>'+
     '<button class="icon-btn" onclick="event.stopPropagation();downloadMusic(\''+owner+'\')" title="скачать">'+
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg></button>'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg></button>'+
     '</div>';
+}
+const SPEEDS=[1,0.75,0.5,1.25,1.5];
+const musicSpeed={};
+function cycleSpeed(owner){
+  const cur=musicSpeed[owner]||1;
+  const next=SPEEDS[(SPEEDS.indexOf(cur)+1)%SPEEDS.length];
+  musicSpeed[owner]=next;
+  const b=document.getElementById('mspd-'+owner);
+  if(b)b.textContent=(next+'').replace('.',',')+'×';
+  if(playingAudio&&playingAudio.dataset.owner===owner)playingAudio.playbackRate=next;
+  toast(next<1?'Замедлено до '+next+'×':(next>1?'Ускорено до '+next+'×':'Обычная скорость'));
 }
 const musicCache={};
 function musicOf(owner){
@@ -4462,6 +4502,11 @@ function toggleMusic(btn,owner){
     if(!musicCache[owner])musicCache[owner]=dataToBlobUrl(m.data);
     playingAudio=new Audio(musicCache[owner]);
     playingAudio.dataset.owner=owner;
+    playingAudio.playbackRate=musicSpeed[owner]||1;
+    playingAudio.ontimeupdate=()=>{
+      const bar=document.getElementById('mbar-'+owner);
+      if(bar&&playingAudio.duration)bar.style.width=(playingAudio.currentTime/playingAudio.duration*100)+'%';
+    };
     playingAudio.play().catch(()=>toast('Не удалось проиграть'));
     btn.setAttribute('data-playing','1');
     btn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
@@ -4944,6 +4989,12 @@ function renderProfile(){
   const u=S.user;
   document.getElementById('p-cover').style.background=u.coverImg?('url('+u.coverImg+') center/cover'):COVERS[u.cover||0];
   renderShelf();
+  const mm=document.getElementById('my-music');
+  if(mm){
+    const m=u.music;
+    if(m){mm.style.display='block';mm.innerHTML=musicPlayer(m,'me',true)}
+    else mm.style.display='none';
+  }
   const pa=document.getElementById('p-ava');
   if(u.photo){pa.style.background='url('+u.photo+') center/cover';document.getElementById('p-initial').textContent='';}
   else{pa.style.background=AVAS[u.ava||0];document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();}

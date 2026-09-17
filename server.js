@@ -1267,7 +1267,7 @@ route('POST', '/api/auth/email/request', async (req, res, body) => {
   db.codes[key] = { code, expires: now() + 10 * 60e3, sentAt: now(), attempts: 0, log: recent.concat(now()) };
   save();
 
-  if (MAIL_ENABLED) {
+  if (MAIL_ENABLED && validEmail(email)) {
     const r = await sendMail(email, code);
     if (!r.sent) {
       delete db.codes[key];
@@ -1744,8 +1744,12 @@ function reportHtml(r) {
     '<h2>Лицо, в отношении которого подано обращение</h2><div class="card">' +
     'Имя в мессенджере: ' + esc(r.peerName) + '<br>' +
     'Юзернейм: ' + (r.peerUsername ? '@' + esc(r.peerUsername) : '—') + '<br>' +
-    'Телефон, указанный при регистрации: ' + (r.peerPhone ? '+7' + esc(r.peerPhone) : 'не привязан') + '<br>' +
-    'Почта: ' + (r.peerEmail ? esc(r.peerEmail) : 'не указана') + '<br>' +
+    'Телефон при регистрации: ' + (r.peerPhone
+      ? '+7 ' + esc(r.peerPhone.slice(0, 3)) + ' •••-••-' + esc(r.peerPhone.slice(-2)) + ' <i style="color:#777">(скрыт)</i>'
+      : 'не привязан') + '<br>' +
+    'Почта: ' + (r.peerEmail
+      ? esc(r.peerEmail.slice(0, 2)) + '•••@' + esc((r.peerEmail.split('@')[1] || '')) + ' <i style="color:#777">(скрыта)</i>'
+      : 'не указана') + '<br>' +
     'Аккаунт создан: ' + (r.peerCreated ? dt(r.peerCreated) : '—') +
     '</div>' +
 
@@ -1753,6 +1757,13 @@ function reportHtml(r) {
     '<div class="sub">Включая сообщения, удалённые отправителем. ' +
     'Всего записей: ' + r.snapshot.length + '</div>' +
     '<table><tr><th>Время</th><th>Отправитель</th><th>Сообщение</th></tr>' + rows + '</table>' +
+
+    '<div class="warn" style="background:#EEF1FF;border-left-color:#6C5CE7">' +
+    '<b>Почему телефон скрыт.</b> Мы не раскрываем личные данные по обращению частного лица — ' +
+    'иначе протокол сам стал бы способом узнать чужой номер. Полные данные пользователя ' +
+    '(телефон, почта, IP-адреса, история входов) администрация Newchat передаёт ' +
+    '<b>только по официальному запросу правоохранительных органов</b> с указанием номера протокола №' + r.num + '. ' +
+    'Следователь направляет запрос — мы отвечаем в установленный законом срок.</div>' +
 
     '<h2>Что делать дальше</h2>' +
     '<div class="warn">Сохраните эту страницу в PDF: в браузере нажмите «Поделиться» или «⋮» → ' +
@@ -1767,8 +1778,9 @@ function reportHtml(r) {
     '<li><b>Если распространены личные данные</b> — укажите это в заявлении. ' +
     'Статья 137 УК РФ (нарушение неприкосновенности частной жизни), ' +
     'плюс жалоба в Роскомнадзор: rkn.gov.ru.</li>' +
-    '<li><b>Сохраните номер протокола</b> — №' + r.num + '. По нему администрация Newchat ' +
-    'подтвердит подлинность переписки по запросу правоохранительных органов.</li>' +
+    '<li><b>Укажите в заявлении номер протокола</b> — №' + r.num + '. ' +
+    'По нему следователь запросит у администрации Newchat полные данные нарушителя ' +
+    'и подтверждение подлинности переписки. Без этого номера запрос обработать нельзя.</li>' +
     '</ol>' +
 
     '<h2>О документе</h2><div class="card" style="font-size:12.5px;color:#555">' +
@@ -1788,15 +1800,15 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
 
   /* Пауза после предыдущей жалобы — чтобы протокол не использовали
      как способ читать удалённые сообщения */
-  if (user.reportBlockUntil && user.reportBlockUntil > now()) {
+  const onTeam = isDev(user) || isCodev(user);
+  if (!onTeam && user.reportBlockUntil && user.reportBlockUntil > now()) {
     const hrs = Math.ceil((user.reportBlockUntil - now()) / 3600e3);
     return send(res, 429, { error: 'Следующую жалобу можно подать через ' + hrs + ' ч. Ограничение защищает от злоупотреблений.' });
   }
 
   const peerId = chat.members.find(m => m !== user.id);
   const peer = db.users[peerId] || {};
-  const email = normEmail(body.email);
-  if (!validEmail(email)) return send(res, 400, { error: 'Укажите почту, куда отправить протокол' });
+  const email = normEmail(body.email);   /* почта необязательна */
 
   const num = 4000 + db.reports.length + 1;
   const token = crypto.randomBytes(16).toString('hex');
@@ -1815,8 +1827,9 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
   };
   db.reports.push(report);
 
-  /* Двое суток без новых жалоб и без биржи */
-  user.reportBlockUntil = now() + 2 * 86400e3;
+  /* Двое суток без новых жалоб и без биржи. Команду это не касается:
+     мы помогаем людям, которым угрожают прямо сейчас. */
+  if (!onTeam) user.reportBlockUntil = now() + 2 * 86400e3;
   save();
 
   const link = PUBLIC_URL + '/report/' + num + '?t=' + token;
@@ -1844,15 +1857,26 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
     } catch (e) {}
   }
 
+  /* Человек должен знать, что на него подали жалобу: тайный сбор данных недопустим */
+  if (peerId) {
+    serviceMessage(peerId, 'На вас подана жалоба «' + kind + '» (протокол №' + num + '). ' +
+      'Сформирован слепок переписки. Ваши личные данные не раскрыты: они передаются ' +
+      'только по официальному запросу правоохранительных органов. ' +
+      'Если жалоба ложная, это скажется на доверии подавшего.');
+    push(peerId, { type: 'state' });
+  }
+
   serviceMessage(user.id,
     'Жалоба №' + num + ' (' + kind + ') зарегистрирована.\n\n' +
-    'Протокол переписки со всеми сообщениями, включая удалённые: ' + link + '\n\n' +
+    'Протокол переписки со всеми сообщениями, включая удалённые, откроется по ссылке: ' + link + '\n\n' +
     'Откройте ссылку и сохраните в PDF, затем подайте заявление — инструкция внутри протокола.\n\n' +
-    'Следующую жалобу можно подать через 2 суток: ограничение защищает от тех, ' +
-    'кто использовал бы протокол ради чтения удалённых сообщений.');
+    (onTeam
+      ? 'Вы из команды — ограничение на частоту жалоб к вам не применяется.'
+      : 'Следующую жалобу можно подать через 2 суток: ограничение защищает от тех, ' +
+        'кто использовал бы протокол ради чтения удалённых сообщений.'));
   push(user.id, { type: 'state' });
 
-  send(res, 200, { num, link, mailed: MAIL_ENABLED });
+  send(res, 200, { num, link, mailed: MAIL_ENABLED && validEmail(email) });
 });
 
 /* ---------- Реквизиты для получения денег ---------- */
@@ -1902,7 +1926,7 @@ route('POST', '/api/deals/start', async (req, res, body, user) => {
   if (!seller || !seller.requisites) return send(res, 400, { error: 'Продавец не указал реквизиты' });
 
   if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
-  if (user.reportBlockUntil && user.reportBlockUntil > now()) return send(res, 403, { error: 'Биржа закрыта на 2 суток после подачи жалобы' });
+  if (!isDev(user) && !isCodev(user) && user.reportBlockUntil && user.reportBlockUntil > now()) return send(res, 403, { error: 'Биржа закрыта на 2 суток после подачи жалобы' });
   const active = Object.values(db.deals).filter(d => d.buyer === user.id && (d.status === 'pay' || d.status === 'paid'));
   if (active.length >= 3) return send(res, 400, { error: 'У вас уже 3 активные сделки' });
 
@@ -2129,6 +2153,40 @@ route('POST', '/api/dev/gift-types', async (req, res, body, user) => {
     all.push({ type: k, name: t.name, total: t.total, minted: (db.gifts || []).filter(g => g.type === k).length, fixed: false });
   }
   send(res, 200, { types: all });
+});
+
+route('POST', '/api/dev/report-data', async (req, res, body, user) => {
+  /* Полные данные по протоколу — для ответа на официальный запрос */
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const num = Number(body.num);
+  const r = db.reports.find(x => x.num === num);
+  if (!r) return send(res, 404, { error: 'Протокол №' + num + ' не найден' });
+  const target = db.users[r.against];
+  const author = db.users[r.from];
+  send(res, 200, {
+    data: {
+      num: r.num,
+      kind: r.kind,
+      time: r.time,
+      opened: r.opened || 0,
+      against: {
+        name: r.peerName,
+        username: r.peerUsername,
+        phone: target ? (target.phone ? '+7' + target.phone : 'не привязан') : 'аккаунт удалён',
+        email: target ? (target.email || 'не указана') : '',
+        created: r.peerCreated,
+        trust: target ? target.trust : 0,
+        banned: target ? !!target.banned : false
+      },
+      author: {
+        name: r.authorName,
+        username: r.authorUsername,
+        phone: author ? (author.phone ? '+7' + author.phone : 'не привязан') : '',
+        reports: db.reports.filter(x => x.from === r.from).length
+      },
+      messages: r.snapshot.length
+    }
+  });
 });
 
 route('POST', '/api/dev/broadcast', async (req, res, body, user) => {
@@ -2520,7 +2578,7 @@ function grantDevCoin(user) {
   let changed = false;
 
   /* Ищем всех девов среди зарегистрированных */
-  const devs = Object.values(db.users).filter(u => !u.isBot && isDev(u));
+  const devs = Object.values(db.users).filter(u => !u.isBot && (isDev(u) || isCodev(u)));
   for (const d of devs) {
     if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
     const minted = db.gifts.filter(g => g.type === 'devcoin').length;
@@ -2956,7 +3014,7 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
     if (!spare) return send(res, 400, { error: 'Это ваш единственный юзернейм — сначала займите запасной, он станет основным' });
   }
   if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле — так покупатели знают, с кем имеют дело' });
-  if (user.reportBlockUntil && user.reportBlockUntil > now()) return send(res, 403, { error: 'Биржа закрыта на 2 суток после подачи жалобы' });
+  if (!isDev(user) && !isCodev(user) && user.reportBlockUntil && user.reportBlockUntil > now()) return send(res, 403, { error: 'Биржа закрыта на 2 суток после подачи жалобы' });
   if ((user.trust || 0) < SELL_MIN_TRUST) return send(res, 400, { error: 'Продавать можно с доверием от ' + SELL_MIN_TRUST + '%' });
   if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты в «Сделках» — их увидит покупатель' });
 
@@ -3147,6 +3205,9 @@ const server = http.createServer(async (req, res) => {
       return res.end('<meta charset="utf-8"><h2 style="font-family:Arial">Срок хранения истёк</h2>' +
         '<p style="font-family:Arial">Протокол доступен 30 дней с момента подачи жалобы.</p>');
     }
+    r.opened = (r.opened || 0) + 1;
+    r.lastOpen = now();
+    save();
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(reportHtml(r));
   }
