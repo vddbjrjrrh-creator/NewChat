@@ -484,6 +484,8 @@ function fullState(user) {
       bio: user.bio || '',
       gifts: myGifts(user.id),
       music: user.music || null,
+      ringtone: user.ringtone || null,
+      msgSound: user.msgSound || null,
       coverImg: user.coverImg || '',
       icon: user.icon || '',
       invites: user.inviteCount || 0,
@@ -2696,6 +2698,26 @@ route('POST', '/api/help/ask', async (req, res, body, user) => {
 
 route('POST', '/api/profile/style', async (req, res, body, user) => {
   /* Оформление профиля: обложка и подпись. Часть — только с премиумом. */
+  if (body.ringtone !== undefined) {
+    const r = body.ringtone;
+    if (!r) { user.ringtone = null; }
+    else {
+      const data = String(r.data || '');
+      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
+      if (data.length > 4200000) return send(res, 400, { error: 'Рингтон больше 3 МБ — возьмите короче' });
+      user.ringtone = { data, name: String(r.name || 'Свой рингтон').replace(/\.[a-z0-9]+$/i, '').slice(0, 50) };
+    }
+  }
+  if (body.msgSound !== undefined) {
+    const m = body.msgSound;
+    if (!m) { user.msgSound = null; }
+    else {
+      const data = String(m.data || '');
+      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
+      if (data.length > 700000) return send(res, 400, { error: 'Звук сообщения больше 500 КБ — возьмите короче' });
+      user.msgSound = { data, name: String(m.name || 'Свой звук').replace(/\.[a-z0-9]+$/i, '').slice(0, 50) };
+    }
+  }
   if (body.music !== undefined) {
     const m = body.music;
     if (!m) { user.music = null; }
