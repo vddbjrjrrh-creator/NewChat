@@ -269,6 +269,7 @@ function publicUser(u) {
     codev: isCodev(u),
     bio: u.bio || '',
     gifts: u.isBot ? [] : myGifts(u.id),
+    music: (u.anon || u.isBot) ? null : (u.music || null),
     premium: isPremium(u),
     premiumUntil: isPremium(u) ? (u.premiumUntil || 0) : 0,
     coverImg: u.coverImg || '',
@@ -401,6 +402,31 @@ function sellerStats(userId) {
   const deals = Object.values(db.deals).filter(d => d.seller === userId && d.status === 'done');
   return { deals: deals.length };
 }
+function giftMarket(forUser) {
+  return (db.gifts || [])
+    .filter(g => g.forSale && !g.frozen)
+    .map(g => {
+      const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+      const sales = (db.giftSales || []).filter(x => x.type === g.type);
+      const last = sales.length ? sales[sales.length - 1] : null;
+      return {
+        id: g.id, type: g.type, num: g.num,
+        name: t.name || g.type,
+        total: t.total || 0,
+        rarity: t.rarity || '',
+        rarityNum: t.rarityNum || 1,
+        price: g.price || 0,
+        mine: g.owner === forUser,
+        lastPrice: last ? last.price : 0,
+        salesCount: sales.length,
+        seller: Object.assign(publicUser(db.users[g.owner]) || {}, {
+          trust: (db.users[g.owner] || {}).trust || 0,
+          stats: sellerStats(g.owner)
+        })
+      };
+    });
+}
+
 function marketList(forUser) {
   return Object.entries(db.usernames)
     .filter(([, v]) => v.forSale && !v.frozen)
@@ -455,6 +481,7 @@ function fullState(user) {
       codev: isCodev(user),
       bio: user.bio || '',
       gifts: myGifts(user.id),
+      music: user.music || null,
       coverImg: user.coverImg || '',
       icon: user.icon || '',
       invites: user.inviteCount || 0,
@@ -464,6 +491,7 @@ function fullState(user) {
     chats: userChats(user.id),
     usernames: myUsernames(user.id),
     market: marketList(user.id),
+    giftMarket: giftMarket(user.id),
     deals: myDeals(user.id),
     bots: myBots(user.id),
     stories: storiesFeed(user),
@@ -685,6 +713,18 @@ function finishDeal(deal, how) {
   const seller = db.users[deal.seller];
   const buyer = db.users[deal.buyer];
 
+  if (how === 'done' && deal.kind === 'gift') {
+    /* Карточка меняет владельца, цена уходит в историю рынка */
+    const g = (db.gifts || []).find(x => x.id === deal.giftId);
+    if (g) {
+      g.owner = deal.buyer;
+      g.forSale = false;
+      g.frozen = null;
+      g.price = 0;
+      db.giftSales = db.giftSales || [];
+      db.giftSales.push({ type: g.type, price: deal.price, time: now() });
+    }
+  }
   if (how === 'done') {
     if (rec) {
       const wasMain = rec.main;
@@ -716,6 +756,10 @@ function finishDeal(deal, how) {
     if (rec && rec.frozen === deal.id) {
       rec.frozen = null;
       rec.forSale = true; /* лот возвращается на биржу */
+    }
+    if (deal.kind === 'gift') {
+      const g = (db.gifts || []).find(x => x.id === deal.giftId);
+      if (g) { g.frozen = null; g.forSale = true; }
     }
     deal.status = 'cancelled';
     deal.doneAt = now();
@@ -2454,6 +2498,7 @@ function myGifts(userId) {
       const last = sales.length ? sales[sales.length - 1] : null;
       return {
         id: g.id, type: g.type, num: g.num,
+        forSale: !!g.forSale, price: g.price || 0, frozen: !!g.frozen,
         name: t.name || g.type, total: t.total || 0,
         rarity: t.rarity || '', rarityNum: t.rarityNum || 1,
         desc: t.desc || '',
@@ -2465,20 +2510,76 @@ function myGifts(userId) {
     });
 }
 
-/* Выдаём монету разработчикам: по одной, пока есть тираж */
+/* Монета достаётся всем, кто записан разработчиком — даже если он ещё не заходил */
 function grantDevCoin(user) {
-  if (!isDev(user)) return;
   db.gifts = db.gifts || [];
-  if (db.gifts.some(g => g.type === 'devcoin' && g.owner === user.id)) return;
-  const minted = db.gifts.filter(g => g.type === 'devcoin').length;
-  if (minted >= GIFT_TYPES.devcoin.total) return;
-  db.gifts.push({
-    id: uid(), type: 'devcoin', num: minted + 1,
-    owner: user.id, time: now()
-  });
-  save();
-  serviceMessage(user.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
+  let changed = false;
+
+  /* Ищем всех девов среди зарегистрированных */
+  const devs = Object.values(db.users).filter(u => !u.isBot && isDev(u));
+  for (const d of devs) {
+    if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
+    const minted = db.gifts.filter(g => g.type === 'devcoin').length;
+    if (minted >= GIFT_TYPES.devcoin.total) break;
+    db.gifts.push({ id: uid(), type: 'devcoin', num: minted + 1, owner: d.id, time: now() });
+    changed = true;
+    serviceMessage(d.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
+    push(d.id, { type: 'state' });
+  }
+  if (changed) save();
 }
+
+route('POST', '/api/gifts/sell', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'Карточка в сделке' });
+  if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле' });
+  if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты для получения денег' });
+  const price = Math.round(Number(body.price) || 0);
+  if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
+  if (price > 5000000) return send(res, 400, { error: 'Слишком большая цена' });
+  g.forSale = true;
+  g.price = price;
+  save();
+  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
+});
+
+route('POST', '/api/gifts/unsell', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'Идёт сделка — снять нельзя' });
+  g.forSale = false;
+  g.price = 0;
+  save();
+  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
+});
+
+route('POST', '/api/gifts/buy', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || !g.forSale) return send(res, 404, { error: 'Карточка не продаётся' });
+  if (g.owner === user.id) return send(res, 400, { error: 'Это ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'По карточке уже идёт сделка' });
+  if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
+
+  const seller = db.users[g.owner];
+  if (!seller || !seller.requisites) return send(res, 400, { error: 'У продавца нет реквизитов' });
+
+  const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+  const deal = {
+    id: uid(), kind: 'gift', giftId: g.id,
+    username: (t.name || g.type) + ' №' + g.num,
+    seller: seller.id, buyer: user.id,
+    price: g.price, status: 'pay',
+    createdAt: now(), requisites: seller.requisites
+  };
+  db.deals[deal.id] = deal;
+  g.frozen = deal.id;
+  save();
+
+  serviceMessage(seller.id, 'Покупатель хочет забрать вашу карточку «' + deal.username + '» за ' + g.price + ' ₽. Ожидайте перевод.');
+  push(seller.id, { type: 'state' });
+  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
+});
 
 route('POST', '/api/gifts/list', async (req, res, body, user) => {
   grantDevCoin(user);
@@ -2501,6 +2602,20 @@ route('POST', '/api/help/ask', async (req, res, body, user) => {
 
 route('POST', '/api/profile/style', async (req, res, body, user) => {
   /* Оформление профиля: обложка и подпись. Часть — только с премиумом. */
+  if (body.music !== undefined) {
+    const m = body.music;
+    if (!m) { user.music = null; }
+    else {
+      const data = String(m.data || '');
+      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
+      if (data.length > 5600000) return send(res, 400, { error: 'Трек больше 4 МБ — выберите короче' });
+      user.music = {
+        data,
+        name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60),
+        size: Math.round(data.length * 0.75)
+      };
+    }
+  }
   if (body.coverImg !== undefined) {
     /* Своя обложка из галереи — премиум */
     const img = String(body.coverImg || '');

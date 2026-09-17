@@ -1068,6 +1068,13 @@ body{
       </label>
       <input type="file" id="cover-file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickCoverFile(this)">
 
+      <div class="w-section">Музыка в профиле</div>
+      <div class="glass-card" id="music-box" style="margin:8px 16px;padding:14px 16px"></div>
+      <label class="btn ghost" for="music-file" style="display:block;text-align:center;cursor:pointer;margin:8px 16px">
+        Выбрать трек из файлов
+      </label>
+      <input type="file" id="music-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickMusic(this)">
+
       <div class="w-section">О себе</div>
       <div class="field" style="margin:8px 16px">
         <input type="text" class="txt" id="bio-input" maxlength="140" placeholder="Пара слов о себе">
@@ -1341,12 +1348,14 @@ body{
 
   <!-- БИРЖА -->
   <div class="screen" id="s-market">
-    <div class="hdr"><h1>Биржа юзернеймов</h1></div>
+    <div class="hdr"><h1>Биржа</h1></div>
     <div class="market-tabs">
       <button class="mtab on" id="mt-my" onclick="marketTab('my')">Мои</button>
-      <button class="mtab" id="mt-all" onclick="marketTab('all')">Каталог</button>
+      <button class="mtab" id="mt-all" onclick="marketTab('all')">Юзернеймы</button>
+      <button class="mtab" id="mt-cards" onclick="marketTab('cards')">Карточки</button>
     </div>
     <div class="scroll" id="market-my"></div>
+    <div class="scroll" id="market-cards" style="display:none"></div>
     <div class="scroll" id="market-all" style="display:none">
       <div class="empty">
         <div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg></div>
@@ -1362,6 +1371,17 @@ body{
     </div>
 
     <div class="sheet-veil" id="veil-market" onclick="closeSheets()"></div>
+    <div class="sheet" id="sheet-sellcard">
+      <div class="grip"></div>
+      <h3>Продать карточку</h3>
+      <p style="font-size:.86rem;color:var(--ink-2);margin-bottom:10px">«<span id="sellcard-name"></span>» уйдёт покупателю после подтверждения перевода.</p>
+      <div class="field" style="margin-bottom:12px">
+        <input type="number" class="txt" id="sellcard-price" placeholder="Цена в рублях" inputmode="numeric">
+      </div>
+      <button class="btn" onclick="doSellCard()">Выставить</button>
+      <button class="btn ghost" onclick="closeSheets()">Отмена</button>
+    </div>
+
     <div class="sheet" id="sheet-sell">
       <div class="grip"></div>
       <h3>Продать <span class="mono" id="sell-uname"></span></h3>
@@ -1651,7 +1671,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2397,7 +2417,7 @@ function openPeer(){
     '<div style="margin-top:-59px;text-align:center">'+avaBig+'</div>'+
     '<div style="text-align:center;padding:12px 20px 2px"><b style="font-size:1.4rem">'+esc(p.name||'')+'</b>'+check+devChip(p)+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
     '<div style="text-align:center;color:var(--ink-2);font-size:.82rem;padding-bottom:4px" onclick="copyText(\'@'+esc(p.username||'')+'\');toast(\'Юзернейм скопирован\')">@'+esc(p.username||'')+' · '+esc(sub)+'</div>'+
-    bioLine+premLine(p)+peerShelf(p)+dossier+trustRow+
+    bioLine+premLine(p)+peerMusicBlock(p)+peerShelf(p)+dossier+trustRow+
     '<div style="padding:12px 16px 18px;display:flex;flex-direction:column;gap:8px">'+
     (c.type==='dm'&&!p.bot?'<button class="btn ghost" style="margin:0" onclick="closeSheets();blockPeer()">'+(c.blocked?'Разблокировать':'Заблокировать')+'</button>':'')+
     (c.type==='dm'?'<button class="btn ghost" style="margin:0;color:var(--danger)" onclick="closeSheets();openSheet(\'sheet-report\')">Пожаловаться</button>':'')+
@@ -4246,6 +4266,13 @@ async function askHelp(preset){
 }
 /* ===== ВИТРИНА КОЛЛЕКЦИИ ===== */
 const SHIELD_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg>';
+function peerMusicBlock(p){
+  if(!p.music)return '';
+  peerMusic={owner:p.id,music:p.music};
+  return '<div style="padding:4px 16px 10px">'+
+    '<div class="w-section" style="margin:0 0 8px">Музыка</div>'+
+    '<div class="glass-card" style="padding:12px 14px">'+musicPlayer(p.music,p.id)+'</div></div>';
+}
 function premLine(p){
   if(!p.premium)return '';
   const until=p.premiumUntil?new Date(p.premiumUntil):null;
@@ -4274,7 +4301,7 @@ function openPeerGift(i){
 function openGift(i){
   const g=((S&&S.user&&S.user.gifts)||[])[i];
   if(!g)return;
-  showGiftCard(g);
+  showGiftCard(Object.assign({},g,{mineCard:true}));
 }
 function showGiftCard(g){
   const price=g.lastPrice
@@ -4311,7 +4338,10 @@ function showGiftCard(g){
     '<div class="glass-card" style="padding:12px 14px;text-align:center;margin-bottom:12px">'+
       '<div style="font-size:.66rem;color:var(--ink-2);margin-bottom:4px">ОЦЕНКА РЫНКА</div>'+price+
     '</div>'+
-    '<div class="conv-preview" style="text-align:left">'+esc(g.desc)+'</div>';
+    '<div class="conv-preview" style="text-align:left">'+esc(g.desc)+'</div>'+
+    (g.mineCard?(g.forSale
+      ? '<button class="btn ghost" onclick="closeSheets();unsellCard(\''+g.id+'\')">Снять с продажи · '+g.price.toLocaleString('ru')+' ₽</button>'
+      : '<button class="btn" onclick="closeSheets();openSellCard(\''+g.id+'\',\''+esc(g.name)+'\')">Продать на бирже</button>'):'');
   openSheet('sheet-gift');
   setTimeout(()=>{const c=document.getElementById('the-coin');if(c)tossCoin(c.parentNode)},350);
 }
@@ -4369,6 +4399,14 @@ function renderLook(){
       '</div>';
   }).join('');
 
+  const mb=document.getElementById('music-box');
+  if(mb){
+    const m=S&&S.user&&S.user.music;
+    mb.innerHTML=m
+      ? musicPlayer(m,'me')+'<button class="btn ghost" style="margin-top:10px" onclick="removeMusic()">Убрать музыку</button>'
+      : '<div style="text-align:center;color:var(--ink-2);font-size:.84rem">Трек увидят все, кто откроет ваш профиль. Они смогут его послушать и скачать.</div>';
+  }
+
   const tp=document.getElementById('tgl-push');
   if(tp)tp.classList.toggle('on',pushOn());
   const pn=document.getElementById('push-note');
@@ -4388,6 +4426,86 @@ function renderLook(){
   if(bio&&S&&S.user)bio.value=S.user.bio||'';
   const t=document.getElementById('tgl-fx');
   if(t)t.classList.toggle('on',fxOn());
+}
+function musicPlayer(m,owner){
+  if(!m)return '';
+  return '<div style="display:flex;align-items:center;gap:12px">'+
+    '<button class="icon-btn" onclick="event.stopPropagation();toggleMusic(this,\''+owner+'\')" style="width:44px;height:44px;background:var(--accent);color:#fff;flex:none;border-radius:50%">'+
+      '<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5.5v13l11-6.5z"/></svg></button>'+
+    '<div style="flex:1;min-width:0">'+
+      '<b style="font-size:.88rem;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.name)+'</b>'+
+      '<span style="font-size:.72rem;color:var(--ink-2)">'+fmtSize(m.size||0)+'</span></div>'+
+    '<button class="icon-btn" onclick="event.stopPropagation();downloadMusic(\''+owner+'\')" title="скачать">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg></button>'+
+    '</div>';
+}
+const musicCache={};
+function musicOf(owner){
+  if(owner==='me')return S&&S.user&&S.user.music;
+  return (peerMusic&&peerMusic.owner===owner)?peerMusic.music:null;
+}
+let peerMusic=null,playingAudio=null;
+function toggleMusic(btn,owner){
+  const m=musicOf(owner);
+  if(!m)return;
+  if(playingAudio&&!playingAudio.paused){
+    playingAudio.pause();
+    document.querySelectorAll('[data-playing]').forEach(b=>{
+      b.removeAttribute('data-playing');
+      b.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5.5v13l11-6.5z"/></svg>';
+    });
+    if(playingAudio.dataset.owner===owner)return;
+  }
+  try{
+    if(!musicCache[owner])musicCache[owner]=dataToBlobUrl(m.data);
+    playingAudio=new Audio(musicCache[owner]);
+    playingAudio.dataset.owner=owner;
+    playingAudio.play().catch(()=>toast('Не удалось проиграть'));
+    btn.setAttribute('data-playing','1');
+    btn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+    playingAudio.onended=()=>{
+      btn.removeAttribute('data-playing');
+      btn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M8 5.5v13l11-6.5z"/></svg>';
+    };
+  }catch(e){toast('Не удалось проиграть')}
+}
+function downloadMusic(owner){
+  const m=musicOf(owner);
+  if(!m)return;
+  try{
+    if(!musicCache[owner])musicCache[owner]=dataToBlobUrl(m.data);
+    const a=document.createElement('a');
+    a.href=musicCache[owner];a.download=(m.name||'track')+'.mp3';
+    document.body.appendChild(a);a.click();a.remove();
+    toast('Скачано в Загрузки');
+  }catch(e){toast('Не удалось скачать')}
+}
+function pickMusic(input){
+  const f=input.files&&input.files[0];
+  input.value='';
+  if(!f)return;
+  if(!/^audio\//.test(f.type)&&!/\.(mp3|m4a|aac|ogg|wav)$/i.test(f.name)){
+    toast('Нужен музыкальный файл: mp3, m4a, aac, ogg, wav');return;
+  }
+  if(f.size>4*1048576){toast('Трек больше 4 МБ — выберите короче');return}
+  toast('Загружаем трек…');
+  const fr=new FileReader();
+  fr.onload=async()=>{
+    try{
+      const r=await api('/api/profile/style',{music:{data:fr.result,name:f.name}});
+      S=r.state;delete musicCache['me'];renderLook();
+      toast('Музыка добавлена в профиль');
+      burst('star',innerWidth/2,160);
+    }catch(e){}
+  };
+  fr.readAsDataURL(f);
+}
+async function removeMusic(){
+  try{
+    const r=await api('/api/profile/style',{music:null});
+    S=r.state;delete musicCache['me'];renderLook();
+    toast('Музыка убрана');
+  }catch(e){}
 }
 function pickCoverFile(input){
   const f=input.files&&input.files[0];
@@ -4627,6 +4745,82 @@ function openPremium(){
 }
 
 /* ============ БИРЖА ============ */
+function renderCardMarket(){
+  const box=document.getElementById('market-cards');
+  if(!box)return;
+  const lots=(S&&S.giftMarket)||[];
+  const mine=((S&&S.user&&S.user.gifts)||[]).filter(g=>!g.forSale);
+  const onSale=((S&&S.user&&S.user.gifts)||[]).filter(g=>g.forSale);
+
+  let html='';
+  if(mine.length||onSale.length){
+    html+='<div class="w-section">Мои карточки</div>'+
+      onSale.concat(mine).map(g=>
+        '<div class="uname-card glass-card" style="align-items:center">'+
+        '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'+
+        '<div class="u" style="flex:1"><div class="h" style="font-size:.92rem">'+esc(g.name)+'</div>'+
+        '<div class="sub">№'+g.num+' из '+g.total+' · '+esc(g.rarity)+'</div></div>'+
+        (g.forSale
+          ? '<span class="price mono">'+g.price.toLocaleString('ru')+' ₽</span>'+
+            '<button class="pill-btn sell" onclick="unsellCard(\''+g.id+'\')" style="margin-left:6px">Снять</button>'
+          : '<button class="pill-btn sell" onclick="openSellCard(\''+g.id+'\',\''+esc(g.name)+'\')">Продать</button>')+
+        '</div>').join('');
+  }
+
+  const others=lots.filter(l=>!l.mine);
+  html+='<div class="w-section" style="margin-top:14px">Каталог карточек</div>';
+  if(!others.length){
+    html+='<div class="empty" style="padding:26px 20px"><b>Карточек в продаже нет</b>'+
+      '<p>Когда кто-то выставит коллекционную карточку, она появится здесь.</p></div>';
+  }else{
+    html+=others.map(l=>
+      '<div class="uname-card glass-card" style="align-items:center" onclick="buyCard(\''+l.id+'\',\''+esc(l.name)+'\','+l.price+')">'+
+      '<div class="nft-mini" style="width:46px;height:46px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'+
+      '<div class="u" style="flex:1"><div class="h" style="font-size:.92rem">'+esc(l.name)+' №'+l.num+'</div>'+
+      '<div class="sub">'+esc(l.rarity)+' · из '+l.total+' шт.'+
+        (l.lastPrice?' · прошлая продажа '+l.lastPrice.toLocaleString('ru')+' ₽':' · продаётся впервые')+'</div>'+
+      '<div class="sub" style="color:var(--ink-2)">продавец '+esc(l.seller.name||'')+' · доверие '+(l.seller.trust||0)+'%</div></div>'+
+      '<span class="price mono">'+l.price.toLocaleString('ru')+' ₽</span></div>').join('');
+  }
+  box.innerHTML=html;
+}
+let sellCardId='';
+function openSellCard(id,name){
+  sellCardId=id;
+  document.getElementById('sellcard-name').textContent=name;
+  document.getElementById('sellcard-price').value='';
+  openSheet('sheet-sellcard');
+}
+async function doSellCard(){
+  const price=parseInt(document.getElementById('sellcard-price').value)||0;
+  if(!(price>0)){toast('Укажите цену');return}
+  try{
+    const r=await api('/api/gifts/sell',{id:sellCardId,price});
+    if(S&&S.user)S.user.gifts=r.gifts;
+    S.giftMarket=r.giftMarket;
+    closeSheets();renderCardMarket();renderShelf();
+    toast('Карточка выставлена');
+    burst('star',innerWidth/2,innerHeight/2);
+  }catch(e){}
+}
+async function unsellCard(id){
+  try{
+    const r=await api('/api/gifts/unsell',{id});
+    if(S&&S.user)S.user.gifts=r.gifts;
+    S.giftMarket=r.giftMarket;
+    renderCardMarket();renderShelf();
+    toast('Снято с продажи');
+  }catch(e){}
+}
+async function buyCard(id,name,price){
+  if(!confirm('Купить «'+name+'» за '+price.toLocaleString('ru')+' ₽?\n\nОткроется сделка: переведёте деньги продавцу по его реквизитам, после подтверждения карточка станет вашей.'))return;
+  try{
+    const r=await api('/api/gifts/buy',{id});
+    if(r.state)S=r.state;
+    go('s-wallet');renderWallet();
+    toast('Сделка открыта — переведите оплату');
+  }catch(e){}
+}
 function renderMarket(){
   if(!S)return;
   const used=S.usernames.length, max=S.user.slots||3;
@@ -4735,10 +4929,11 @@ async function startDeal(u){
   }catch(e){}
 }
 function marketTab(which){
-  ['my','all'].forEach(t=>{
+  ['my','all','cards'].forEach(t=>{
     document.getElementById('mt-'+t).classList.toggle('on',t===which);
     document.getElementById('market-'+t).style.display=t===which?'block':'none';
   });
+  if(which==='cards')renderCardMarket();
 }
 
 /* ============ ПРОФИЛЬ ============ */
