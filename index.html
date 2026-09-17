@@ -202,6 +202,23 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
   box-shadow:0 6px 14px rgba(80,62,200,.35), inset 0 -3px 8px rgba(40,26,120,.3)}
 .nft-mini svg{width:56%;height:56%}
 .rar-dot{width:6px;height:6px;border-radius:50%;background:var(--gold);display:inline-block;margin:0 1px}
+/* Чатти — котик-маскот, выглядывает снизу экрана */
+.chatty{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(56%);
+  width:104px;height:104px;z-index:200;cursor:pointer;transition:transform .45s cubic-bezier(.22,1.2,.36,1);
+  filter:drop-shadow(0 -6px 18px rgba(80,62,200,.35))}
+.chatty:active{transform:translateX(-50%) translateY(46%) scale(.94)}
+.chatty.peek{animation:peekUp 5.5s ease-in-out infinite}
+@keyframes peekUp{
+  0%,72%{transform:translateX(-50%) translateY(56%)}
+  80%,92%{transform:translateX(-50%) translateY(34%)}
+  100%{transform:translateX(-50%) translateY(56%)}
+}
+.chatty-bubble{position:fixed;left:50%;bottom:calc(178px + env(safe-area-inset-bottom));transform:translateX(-50%);
+  z-index:201;background:var(--glass-2);backdrop-filter:blur(16px);border:1px solid var(--edge);
+  border-radius:16px;padding:9px 14px;font-size:.8rem;font-weight:700;color:var(--ink);
+  box-shadow:0 8px 22px rgba(31,32,64,.18);white-space:nowrap;display:none;animation:msgIn .3s}
+.chatty-bubble.on{display:block}
+.chatty svg{width:100%;height:100%}
 .glow{position:relative}
 .glow::after{content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
   background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.35) 50%,transparent 70%);
@@ -411,9 +428,17 @@ body{
 }
 .icon-btn:hover{background:var(--glass)}
 /* Обои чата */
-.msgs.wp{background-size:cover;background-position:center;background-attachment:local}
-.msgs.wp::before{content:'';position:absolute;inset:0;background:inherit;background-size:cover;
-  opacity:.9;z-index:-1;pointer-events:none}
+/* Обои держим на самом экране, а не на прокручиваемом блоке —
+   иначе при скролле сверху и снизу появляются белые полосы */
+.screen.has-wp{background-size:cover!important;background-position:center!important}
+.screen.has-wp .msgs{background:transparent}
+.screen.has-wp .hdr{background:rgba(20,18,45,.55);backdrop-filter:blur(16px);border-bottom-color:rgba(255,255,255,.12)}
+.screen.has-wp .hdr h1,.screen.has-wp .hdr .icon-btn,.screen.has-wp #chat-name{color:#fff}
+.screen.has-wp #chat-sub{color:rgba(255,255,255,.75)}
+.screen.has-wp .composer{background:rgba(20,18,45,.5);backdrop-filter:blur(16px)}
+.screen.has-wp .composer input{background:rgba(255,255,255,.14);color:#fff}
+.screen.has-wp .composer input::placeholder{color:rgba(255,255,255,.6)}
+.screen.has-wp .icon-btn{color:#fff}
 .msgs{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:8px;scrollbar-width:none}
 .msgs::-webkit-scrollbar{display:none}
 .day-chip{
@@ -732,6 +757,40 @@ body{
 </style>
 </head>
 <body>
+<div class="chatty-bubble" id="chatty-bubble"></div>
+<div class="chatty peek" id="chatty" onclick="openChatty()" title="Чатти — подскажу по приложению">
+  <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="cbody" cx="38%" cy="28%">
+        <stop offset="0%" stop-color="#C3B7FF"/><stop offset="55%" stop-color="#8B7BEE"/><stop offset="100%" stop-color="#5B4BD4"/>
+      </radialGradient>
+      <radialGradient id="cear" cx="40%" cy="30%">
+        <stop offset="0%" stop-color="#FFC7E8"/><stop offset="100%" stop-color="#E890C0"/>
+      </radialGradient>
+      <radialGradient id="cshine" cx="50%" cy="50%">
+        <stop offset="0%" stop-color="#fff" stop-opacity=".85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <path d="M24 46 L18 16 L46 34 Z" fill="url(#cbody)"/>
+    <path d="M28 43 L25 25 L41 35 Z" fill="url(#cear)"/>
+    <path d="M96 46 L102 16 L74 34 Z" fill="url(#cbody)"/>
+    <path d="M92 43 L95 25 L79 35 Z" fill="url(#cear)"/>
+    <ellipse cx="60" cy="66" rx="42" ry="38" fill="url(#cbody)"/>
+    <ellipse cx="45" cy="47" rx="17" ry="12" fill="url(#cshine)"/>
+    <ellipse cx="45" cy="64" rx="7.5" ry="9" fill="#1B1836"/>
+    <ellipse cx="75" cy="64" rx="7.5" ry="9" fill="#1B1836"/>
+    <ellipse cx="47.5" cy="60.5" rx="2.8" ry="3.2" fill="#fff"/>
+    <ellipse cx="77.5" cy="60.5" rx="2.8" ry="3.2" fill="#fff"/>
+    <path d="M56 78 q4 4 8 0" stroke="#1B1836" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+    <path d="M60 74 l-3.5 3 h7 z" fill="#FFB3D9"/>
+    <g stroke="rgba(27,24,54,.45)" stroke-width="1.8" stroke-linecap="round">
+      <path d="M20 68 h-11"/><path d="M21 75 l-11 4"/>
+      <path d="M100 68 h11"/><path d="M99 75 l11 4"/>
+    </g>
+    <ellipse cx="34" cy="76" rx="6" ry="4" fill="#FFB3D9" opacity=".5"/>
+    <ellipse cx="86" cy="76" rx="6" ry="4" fill="#FFB3D9" opacity=".5"/>
+  </svg>
+</div>
 <div class="lava" aria-hidden="true"><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="g g1"></i><i class="g g2"></i><i class="g g3"></i><i class="g g4"></i><i class="g g5"></i></div>
 <div class="app" id="app">
 
@@ -979,7 +1038,7 @@ body{
 
         <div class="pitem glass-card" onclick="go('s-help')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.2-1.5 2M12 17v.01"/></svg>
-          Помощник<div class="spacer"></div><span class="val">ответы по приложению</span>
+          Чатти<div class="spacer"></div><span class="val">подскажет по приложению</span>
         </div>
 
         <div class="pitem glass-card" onclick="go('s-look')">
@@ -1042,7 +1101,7 @@ body{
   <div class="screen" id="s-help">
     <div class="hdr">
       <button class="icon-btn" onclick="go('s-profile')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="22" height="22"><path d="M15 5l-7 7 7 7"/></svg></button>
-      <h1 style="font-size:1.1rem">Помощник</h1>
+      <h1 style="font-size:1.1rem">Чатти</h1>
     </div>
     <div class="scroll" id="help-log" style="padding:12px 16px 16px"></div>
     <div class="composer" style="border-top:1px solid var(--edge)">
@@ -1351,17 +1410,17 @@ body{
     <div class="hdr"><h1>Биржа</h1></div>
     <div class="market-tabs">
       <button class="mtab on" id="mt-my" onclick="marketTab('my')">Мои</button>
-      <button class="mtab" id="mt-all" onclick="marketTab('all')">Юзернеймы</button>
-      <button class="mtab" id="mt-cards" onclick="marketTab('cards')">Карточки</button>
+      <button class="mtab" id="mt-all" onclick="marketTab('all')">Каталог</button>
     </div>
     <div class="scroll" id="market-my"></div>
-    <div class="scroll" id="market-cards" style="display:none"></div>
     <div class="scroll" id="market-all" style="display:none">
-      <div class="empty">
-        <div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg></div>
-        <b>Лотов пока нет</b>
-        <p>Когда пользователи выставят юзернеймы на продажу, они появятся здесь.</p>
+      <div class="market-tabs" style="padding-top:0">
+        <button class="mtab on" id="f-all" onclick="setMarketFilter('all')">Всё</button>
+        <button class="mtab" id="f-unames" onclick="setMarketFilter('unames')">Юзернеймы</button>
+        <button class="mtab" id="f-cards" onclick="setMarketFilter('cards')">Карточки</button>
+        <button class="mtab" id="f-sort" onclick="cycleSort()" style="margin-left:auto">↓ Цена</button>
       </div>
+      <div id="market-list"></div>
     </div>
     <div class="tabbar">
       <button class="tab" data-t="s-chats" onclick="go('s-chats')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H4l2-3a8 8 0 1115-5z"/></svg>Чаты</button>
@@ -1679,7 +1738,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 30;
+const APP_VERSION = 34;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -1858,10 +1917,20 @@ function show(id){
 }
 function go(id){
   show(id);
-  if(id==='s-market'&&S)refresh().catch(()=>{}); /* каталог всегда свежий */
+  if(id==='s-market'&&S){
+    syncAll();
+    clearInterval(marketPoll);
+    marketPoll=setInterval(()=>{
+      const a=document.querySelector('.screen.active');
+      if(!a||a.id!=='s-market'){clearInterval(marketPoll);return}
+      if(document.hidden)return;
+      syncAll();
+    },30000);
+  }
   if(id==='s-about'){const e=document.getElementById('about-ver');if(e)e.textContent=APP_VERSION}
   if(id==='s-look')renderLook();
   if(id==='s-help')renderHelp();
+  updateChatty();
   if(id==='s-settings'){const e=document.getElementById('s-ver');if(e)e.textContent=APP_VERSION}
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===id));
   if(id==='s-chats')renderChats();
@@ -2070,8 +2139,8 @@ async function loadConfig(){
     const or=document.getElementById('auth-or');
     const warn=document.getElementById('no-server');
     const mailBtn=document.getElementById('mail-btn');
-    /* Почта работает и в режиме разработки — код придёт на экран */
-    mailBtn.style.display='block';
+    /* Вход по почте скрыт, пока сервис отправки не настроен */
+    mailBtn.style.display=cfg.mail?'block':'none';
 
     if(cfg.telegram){
       tgBtn.style.display='block';
@@ -2292,6 +2361,8 @@ function connectWS(){
       const m=chat&&chat.msgs.find(x=>x.id===d.messageId);
       if(m){m.deleted=true;if(currentChat===d.chatId)renderMsgs(chat)}
     }
+    if(d.type==='market'){scheduleSync()}
+    if(d.type==='state'){scheduleSync()}
     if(d.type==='typing'){gotTyping(d.chatId)}
     if(d.type==='read'){
       const c=S.chats.find(x=>x.id===d.chatId);
@@ -2669,17 +2740,18 @@ async function decryptChat(c){
   if(changed&&currentChat===c.id)renderMsgs(c);
 }
 function applyWallpaper(c){
-  const box=document.getElementById('chat-msgs');
-  if(!box)return;
+  const scr=document.getElementById('s-chat');
+  if(!scr)return;
   const v=(c&&c.wp)||'';
   if(v.startsWith('data:')){
-    box.classList.add('wp');
-    box.style.background='url('+v+') center/cover';
+    scr.classList.add('has-wp');
+    scr.style.background='url('+v+') center/cover no-repeat';
   }else if(WALLPAPERS[v]){
-    box.classList.add('wp');
-    box.style.background=WALLPAPERS[v];
+    scr.classList.add('has-wp');
+    scr.style.background=WALLPAPERS[v];
   }else{
-    box.classList.remove('wp');box.style.background='';
+    scr.classList.remove('has-wp');
+    scr.style.background='';
   }
 }
 function renderMsgs(c){
@@ -3689,8 +3761,10 @@ async function dealAct(id,act){
   try{
     const r=await api('/api/deals/'+act,{dealId:id});
     if(r.state)S=r.state;
-    closeSheets();renderWallet();
-    toast({paid:'Продавец уведомлён',confirm:'Юзернейм передан покупателю',cancel:'Сделка отменена',dispute:'Спор открыт'}[act]);
+    closeSheets();
+    await syncAll();
+    if(act==='confirm')burst('deal',innerWidth/2,innerHeight/2);
+    toast({paid:'Продавец уведомлён',confirm:'Передано покупателю',cancel:'Сделка отменена',dispute:'Спор открыт'}[act]);
   }catch(e){}
 }
 
@@ -4254,6 +4328,49 @@ function toggleFx(){
   renderLook();
   if(fxOn())burst('like',innerWidth/2,innerHeight/2);
 }
+/* ===== ЧАТТИ — маскот-помощник ===== */
+const CHATTY_TIPS=[
+  'Мяу! Нажми, если что-то непонятно',
+  'Обои чата меняются в меню чата',
+  'Кружок: тапни микрофон, чтобы переключить',
+  'Карточки нельзя купить — только заслужить',
+  'Секретный чат шифрует сообщения на телефоне',
+  'Свайпни сообщение вправо, чтобы ответить'
+];
+let chattyTimer=null;
+function chattyVisible(){
+  const a=document.querySelector('.screen.active');
+  return !!(a&&['s-chats','s-market','s-wallet','s-profile'].includes(a.id)&&S);
+}
+function updateChatty(){
+  const el=document.getElementById('chatty');
+  if(!el)return;
+  el.style.display=chattyVisible()?'block':'none';
+  if(!chattyVisible())hideChattyBubble();
+}
+function hideChattyBubble(){
+  const b=document.getElementById('chatty-bubble');
+  if(b)b.classList.remove('on');
+}
+function chattySay(text,ms){
+  const b=document.getElementById('chatty-bubble');
+  if(!b||!chattyVisible())return;
+  b.textContent=text;
+  b.classList.add('on');
+  clearTimeout(chattyTimer);
+  chattyTimer=setTimeout(hideChattyBubble,ms||3600);
+}
+function openChatty(){
+  go('s-help');
+  renderHelp();
+  burstAt(document.getElementById('chatty'),'star');
+}
+/* Раз в минуту котик выглядывает и что-нибудь подсказывает */
+setInterval(()=>{
+  if(!chattyVisible()||Math.random()>0.55)return;
+  chattySay(CHATTY_TIPS[Math.floor(Math.random()*CHATTY_TIPS.length)]);
+},62000);
+
 /* ===== ПОМОЩНИК ===== */
 const HELP_HINTS=['Как продать юзернейм?','Что делать, если обманули?','Как включить секретный чат?',
   'Почему не идёт звонок?','Как записать кружок?','Как поменять обои чата?'];
@@ -4267,8 +4384,10 @@ function renderHelp(){
   const box=document.getElementById('help-log');
   if(!box)return;
   if(!helpHistory.length){
-    box.innerHTML='<div class="conv-preview" style="text-align:left;margin-bottom:12px">'+
-      'Отвечаю на вопросы про Newchat: биржа, жалобы, секретные чаты, звонки, кружки, обои, премиум.'+
+    box.innerHTML='<div style="text-align:center;margin-bottom:6px">'+
+      '<div style="width:96px;height:96px;margin:0 auto">'+(document.getElementById('chatty')?document.getElementById('chatty').innerHTML:'')+'</div>'+
+      '<b style="font-size:1.05rem">Привет, я Чатти</b>'+
+      '<p style="font-size:.84rem;color:var(--ink-2);margin-top:4px;line-height:1.45">Подскажу по приложению: биржа, жалобы, секретные чаты, звонки, кружки, обои, премиум. Если не справлюсь — позову разработчика.</p>'+
       '</div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:8px">'+
       HELP_HINTS.map(h=>'<button class="pill-btn sell" style="font-size:.78rem" onclick="askHelp(\''+h.replace(/'/g,"")+'\')">'+h+'</button>').join('')+
@@ -4288,6 +4407,7 @@ async function askHelp(preset){
   try{
     const r=await api('/api/help/ask',{q});
     helpHistory.push({who:'bot',text:r.answer});
+    chattySay('Мяу, разобрались!',2200);
   }catch(e){
     helpHistory.push({who:'bot',text:'Сервер не ответил. Попробуйте ещё раз.'});
   }
@@ -4466,9 +4586,19 @@ function musicPlayer(m,owner,compact){
       '<div style="height:3px;border-radius:2px;background:var(--edge);margin-top:5px;overflow:hidden">'+
         '<div id="mbar-'+owner+'" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div></div></div>'+
     '<button class="pill-btn sell" id="mspd-'+owner+'" onclick="event.stopPropagation();cycleSpeed(\''+owner+'\')" style="font-size:.72rem;min-width:44px">1×</button>'+
+    '<button class="icon-btn" id="mloop-'+owner+'" onclick="event.stopPropagation();toggleLoop(\''+owner+'\')" title="повтор" style="opacity:.45">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg></button>'+
     '<button class="icon-btn" onclick="event.stopPropagation();downloadMusic(\''+owner+'\')" title="скачать">'+
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg></button>'+
     '</div>';
+}
+const musicLoop={};
+function toggleLoop(owner){
+  musicLoop[owner]=!musicLoop[owner];
+  const b=document.getElementById('mloop-'+owner);
+  if(b){b.style.opacity=musicLoop[owner]?'1':'.45';b.style.color=musicLoop[owner]?'var(--accent)':''}
+  if(playingAudio&&playingAudio.dataset.owner===owner)playingAudio.loop=musicLoop[owner];
+  toast(musicLoop[owner]?'Повтор включён':'Повтор выключен');
 }
 const SPEEDS=[1,0.75,0.5,1.25,1.5];
 const musicSpeed={};
@@ -4503,6 +4633,7 @@ function toggleMusic(btn,owner){
     playingAudio=new Audio(musicCache[owner]);
     playingAudio.dataset.owner=owner;
     playingAudio.playbackRate=musicSpeed[owner]||1;
+    playingAudio.loop=!!musicLoop[owner];
     playingAudio.ontimeupdate=()=>{
       const bar=document.getElementById('mbar-'+owner);
       if(bar&&playingAudio.duration)bar.style.width=(playingAudio.currentTime/playingAudio.duration*100)+'%';
@@ -4845,7 +4976,8 @@ async function doSellCard(){
     const r=await api('/api/gifts/sell',{id:sellCardId,price});
     if(S&&S.user)S.user.gifts=r.gifts;
     S.giftMarket=r.giftMarket;
-    closeSheets();renderCardMarket();renderShelf();
+    closeSheets();
+    await syncAll();
     toast('Карточка выставлена');
     burst('star',innerWidth/2,innerHeight/2);
   }catch(e){}
@@ -4855,7 +4987,7 @@ async function unsellCard(id){
     const r=await api('/api/gifts/unsell',{id});
     if(S&&S.user)S.user.gifts=r.gifts;
     S.giftMarket=r.giftMarket;
-    renderCardMarket();renderShelf();
+    await syncAll();
     toast('Снято с продажи');
   }catch(e){}
 }
@@ -4864,7 +4996,10 @@ async function buyCard(id,name,price){
   try{
     const r=await api('/api/gifts/buy',{id});
     if(r.state)S=r.state;
-    go('s-wallet');renderWallet();
+    await syncAll();
+    go('s-wallet');
+    renderWallet();
+    if(r.deal)openDeal(r.deal.id);
     toast('Сделка открыта — переведите оплату');
   }catch(e){}
 }
@@ -4939,7 +5074,8 @@ async function doSell(){
     const r=await api('/api/usernames/sell',{username:sellUname,price:p});
     S.usernames=r.usernames;if(r.market)S.market=r.market;
     document.getElementById('sell-price').value='';
-    closeSheets();renderMarket();
+    closeSheets();
+    await syncAll();
     toast('@'+sellUname+' выставлен на продажу');
   }catch(e){}
 }
@@ -4969,18 +5105,110 @@ function openBuy(u){
 async function startDeal(u){
   try{
     const r=await api('/api/deals/start',{username:u});
-    S=r.state;
+    if(r.state)S=r.state;
     closeSheets();
+    await syncAll();
     go('s-wallet');
+    renderWallet();
     openDeal(r.deal.id);
   }catch(e){}
 }
 function marketTab(which){
-  ['my','all','cards'].forEach(t=>{
+  ['my','all'].forEach(t=>{
     document.getElementById('mt-'+t).classList.toggle('on',t===which);
     document.getElementById('market-'+t).style.display=t===which?'block':'none';
   });
-  if(which==='cards')renderCardMarket();
+  if(which==='all')renderCatalog();
+}
+let marketPoll=null;
+/* Обновляет данные и перерисовывает то, что человек видит прямо сейчас.
+   Нужна, чтобы после покупки, продажи и сделок не приходилось перезаходить. */
+/* Обновляет только биржу, сделки и коллекцию — это мелкие данные.
+   Полное состояние с перепиской не трогаем: оно тяжёлое. */
+let syncTimer=null;
+/* Событий может прийти сразу много — собираем их в один запрос */
+function scheduleSync(){
+  clearTimeout(syncTimer);
+  syncTimer=setTimeout(syncAll,900);
+}
+let syncBusy=false,syncQueued=false;
+async function syncAll(){
+  if(!S||!token)return;
+  if(syncBusy){syncQueued=true;return}
+  syncBusy=true;
+  try{
+    const r=await api('/api/market');
+    if(r.market)S.market=r.market;
+    if(r.giftMarket)S.giftMarket=r.giftMarket;
+    if(r.usernames)S.usernames=r.usernames;
+    if(r.deals)S.deals=r.deals;
+    if(r.gifts&&S.user)S.user.gifts=r.gifts;
+    const a=document.querySelector('.screen.active');
+    const id=a?a.id:'';
+    if(id==='s-market'){renderMarket();renderCatalog()}
+    else if(id==='s-wallet')renderWallet();
+    else if(id==='s-profile')renderShelf();
+  }catch(e){}
+  syncBusy=false;
+  if(syncQueued){syncQueued=false;setTimeout(syncAll,1200)}
+}
+let mFilter='all',mSort='price-desc';
+function setMarketFilter(f){
+  mFilter=f;
+  ['all','unames','cards'].forEach(x=>document.getElementById('f-'+x).classList.toggle('on',x===f));
+  renderCatalog();
+}
+const SORTS=[['price-desc','↓ Цена'],['price-asc','↑ Цена'],['rare','★ Редкость'],['new','⏱ Новые']];
+function cycleSort(){
+  const i=SORTS.findIndex(x=>x[0]===mSort);
+  const next=SORTS[(i+1)%SORTS.length];
+  mSort=next[0];
+  document.getElementById('f-sort').textContent=next[1];
+  renderCatalog();
+}
+function renderCatalog(){
+  const box=document.getElementById('market-list');
+  if(!box)return;
+  let items=[];
+  if(mFilter!=='cards'){
+    items=items.concat(((S&&S.market)||[]).filter(l=>!l.mine).map(l=>({
+      kind:'uname',price:l.price,name:'@'+l.u,sub:'юзернейм · '+l.u.length+' символов',
+      seller:l.seller,rar:0,time:0,raw:l
+    })));
+  }
+  if(mFilter!=='unames'){
+    items=items.concat(((S&&S.giftMarket)||[]).filter(l=>!l.mine).map(l=>({
+      kind:'card',price:l.price,name:l.name+' №'+l.num,
+      sub:l.rarity+' · из '+l.total+' шт.'+(l.lastPrice?' · прошлая '+l.lastPrice.toLocaleString('ru')+' ₽':''),
+      seller:l.seller,rar:l.rarityNum||0,time:0,raw:l
+    })));
+  }
+  items.sort((a,b)=>{
+    if(mSort==='price-asc')return a.price-b.price;
+    if(mSort==='price-desc')return b.price-a.price;
+    if(mSort==='rare')return b.rar-a.rar||b.price-a.price;
+    return b.price-a.price;
+  });
+
+  if(!items.length){
+    box.innerHTML='<div class="empty" style="padding:34px 20px">'+
+      '<div class="e-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8 8a4 4 0 118 0"/></svg></div>'+
+      '<b>Лотов пока нет</b><p>Когда кто-то выставит юзернейм или карточку, они появятся здесь.</p></div>';
+    return;
+  }
+  box.innerHTML=items.map(it=>
+    '<div class="uname-card glass-card" style="align-items:center" onclick="'+
+      (it.kind==='uname'
+        ? 'openBuy(\''+it.raw.u+'\')'
+        : 'buyCard(\''+it.raw.id+'\',\''+esc(it.raw.name)+'\','+it.price+')')+'">'+
+    (it.kind==='card'
+      ? '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'
+      : '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0;background:linear-gradient(135deg,#9BA0AD,#6E7280)">'+
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" width="22" height="22"><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/></svg></div>')+
+    '<div class="u" style="flex:1"><div class="h mono" style="font-size:.92rem">'+esc(it.name)+'</div>'+
+    '<div class="sub">'+esc(it.sub)+'</div>'+
+    '<div class="sub" style="color:var(--ink-2)">'+esc(it.seller.name||'')+' · доверие '+(it.seller.trust||0)+'%</div></div>'+
+    '<span class="price mono">'+it.price.toLocaleString('ru')+' ₽</span></div>').join('');
 }
 
 /* ============ ПРОФИЛЬ ============ */

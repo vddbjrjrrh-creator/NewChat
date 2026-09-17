@@ -2489,6 +2489,18 @@ function pushWeb(sub, ttl) {
 }
 
 /* Шлём «звоночек» — само содержимое приложение заберёт само */
+/* Биржа изменилась. Рассылаем короткий сигнал не чаще раза в 5 секунд,
+   чтобы не устроить лавину запросов на бесплатном сервере. */
+let lastMarketPing = 0;
+function marketChanged() {
+  if (now() - lastMarketPing < 5000) return;
+  lastMarketPing = now();
+  for (const u of Object.values(db.users)) {
+    if (u.isBot || !isOnline(u.id)) continue;
+    push(u.id, { type: 'market' });
+  }
+}
+
 function notifyPush(userId) {
   const u = db.users[userId];
   if (!u || !u.pushSubs || !u.pushSubs.length) return;
@@ -2591,6 +2603,22 @@ function grantDevCoin(user) {
   if (changed) save();
 }
 
+route('GET', '/api/market', async (req, res, body, user) => {
+  /* Легковесный ответ: только лоты. Полное состояние тащит переписку
+     с фото и голосовыми — на бесплатном сервере это его убивает. */
+  send(res, 200, {
+    market: marketList(user.id),
+    giftMarket: giftMarket(user.id),
+    gifts: myGifts(user.id),
+    usernames: myUsernames(user.id),
+    deals: Object.values(db.deals)
+      .filter(d => d.seller === user.id || d.buyer === user.id)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 20)
+      .map(d => dealView(d, user.id))
+  });
+});
+
 route('POST', '/api/gifts/sell', async (req, res, body, user) => {
   const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
   if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
@@ -2603,6 +2631,7 @@ route('POST', '/api/gifts/sell', async (req, res, body, user) => {
   g.forSale = true;
   g.price = price;
   save();
+  marketChanged();
   send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
 });
 
@@ -2613,6 +2642,7 @@ route('POST', '/api/gifts/unsell', async (req, res, body, user) => {
   g.forSale = false;
   g.price = 0;
   save();
+  marketChanged();
   send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
 });
 
@@ -2640,6 +2670,8 @@ route('POST', '/api/gifts/buy', async (req, res, body, user) => {
 
   serviceMessage(seller.id, 'Покупатель хочет забрать вашу карточку «' + deal.username + '» за ' + g.price + ' ₽. Ожидайте перевод.');
   push(seller.id, { type: 'state' });
+  push(user.id, { type: 'state' });
+  marketChanged();
   send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
 });
 
@@ -2996,6 +3028,7 @@ route('POST', '/api/usernames/claim', async (req, res, body, user) => {
 
   db.usernames[username] = { owner: user.id, main: false, forSale: false, price: 0 };
   save();
+  marketChanged();
   send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
@@ -3021,6 +3054,7 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
   rec.forSale = true;
   rec.price = price;
   save();
+  marketChanged();
   send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
@@ -3039,6 +3073,7 @@ route('POST', '/api/usernames/delete', async (req, res, body, user) => {
   if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   delete db.usernames[username]; /* снова свободен для всех */
   save();
+  marketChanged();
   send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
@@ -3050,6 +3085,7 @@ route('POST', '/api/usernames/unsell', async (req, res, body, user) => {
   rec.forSale = false;
   rec.price = 0;
   save();
+  marketChanged();
   send(res, 200, { usernames: myUsernames(user.id), market: marketList(user.id) });
 });
 
