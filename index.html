@@ -1605,6 +1605,20 @@ body{
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurge()">Очистить вложения</button>
       </div>
       <div id="dev-info" class="conv-preview" style="display:none;text-align:left;font-size:.78rem;white-space:pre-line"></div>
+      <div class="w-section" style="margin-top:14px">Разбор жалоб</div>
+      <button class="btn ghost" onclick="devReportList()">Последние жалобы</button>
+      <div class="field" style="margin:8px 0">
+        <input type="number" class="txt" placeholder="Номер протокола" id="rv-num" inputmode="numeric">
+      </div>
+      <div class="field" style="margin:8px 0">
+        <input type="text" class="txt" placeholder="Комментарий для сторон (необязательно)" id="rv-note">
+      </div>
+      <div class="cur-row" style="flex-wrap:wrap">
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem;color:var(--danger)" onclick="devReview('false')">Ложная</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem" onclick="devReview('warn')">Предупредить</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem;color:var(--trust)" onclick="devReview('valid')">Подтвердить</button>
+      </div>
+
       <div class="w-section" style="margin-top:14px">Данные по протоколу (для запроса полиции)</div>
       <div class="field" style="margin:8px 0">
         <input type="number" class="txt" placeholder="Номер протокола, например 4001" id="rd-num" inputmode="numeric">
@@ -1741,7 +1755,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 43;
+const APP_VERSION = 44;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -3053,6 +3067,30 @@ let gcRarity={rarity:'Редкая',rarityNum:3};
 function gcRar(rarity,rarityNum){
   gcRarity={rarity,rarityNum};
   toast('Редкость: '+rarity);
+}
+async function devReportList(){
+  try{
+    const r=await api('/api/dev/report-list',{});
+    const el=document.getElementById('dev-info');
+    el.style.display='block';
+    el.textContent=r.reports.length
+      ? r.reports.map(x=>'№'+x.num+' · '+x.kind+' · @'+x.from+' → @'+x.against+
+          ' · '+new Date(x.time).toLocaleDateString('ru')+
+          (x.verdict?' · РЕШЕНО: '+({false:'ложная',valid:'подтверждена',warn:'предупреждение'}[x.verdict]||x.verdict):' · ждёт разбора')).join('\n')
+      : 'Жалоб пока нет';
+  }catch(e){}
+}
+async function devReview(verdict){
+  const num=document.getElementById('rv-num').value.trim();
+  if(!num){toast('Введите номер протокола');return}
+  const names={false:'ложной',warn:'предупреждением',valid:'подтверждённой'};
+  if(!confirm('Признать жалобу №'+num+' '+names[verdict]+'?'))return;
+  try{
+    const r=await api('/api/dev/report-review',{num,verdict,note:document.getElementById('rv-note').value});
+    document.getElementById('rv-note').value='';
+    toast(r.done.join(', '));
+    burst('star',innerWidth/2,innerHeight/2);
+  }catch(e){}
 }
 async function devReportData(){
   const num=document.getElementById('rd-num').value.trim();

@@ -275,7 +275,7 @@ function publicUser(u) {
     premium: isPremium(u),
     premiumUntil: isPremium(u) ? (u.premiumUntil || 0) : 0,
     coverImg: u.coverImg || '',
-    trust: u.isBot ? undefined : (u.trust || 0),
+    trust: u.isBot ? undefined : ((isDev(u) || isCodev(u)) ? 100 : (u.trust || 0)),
     reportsOn: u.isBot ? 0 : db.reports.filter(r => r.against === u.id).length,
     ageDays: Math.max(0, Math.floor((now() - (u.createdAt || now())) / 86400e3)),
     dealsDone: u.isBot ? 0 : Object.values(db.deals).filter(d => d.seller === u.id && d.status === 'done').length,
@@ -472,7 +472,8 @@ function fullState(user) {
   try { grantDevCoin(user); } catch (e) {}
   return {
     user: Object.assign(publicUser(user), {
-      phone: user.phone, trust: user.trust,
+      phone: user.phone,
+      trust: (isDev(user) || isCodev(user)) ? 100 : user.trust,
       premium: isPremium(user),
       premiumUntil: user.premiumUntil || 0,
       slots: slotLimit(user),
@@ -1810,6 +1811,9 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
 
   const peerId = chat.members.find(m => m !== user.id);
   const peer = db.users[peerId] || {};
+  if (isDev(peer) || isCodev(peer)) {
+    return send(res, 400, { error: 'Это аккаунт команды Newchat — жалоба на него не имеет смысла. Напишите разработчику напрямую.' });
+  }
   const email = normEmail(body.email);   /* почта необязательна */
 
   const num = 4000 + db.reports.length + 1;
@@ -2155,6 +2159,87 @@ route('POST', '/api/dev/gift-types', async (req, res, body, user) => {
     all.push({ type: k, name: t.name, total: t.total, minted: (db.gifts || []).filter(g => g.type === k).length, fixed: false });
   }
   send(res, 200, { types: all });
+});
+
+route('POST', '/api/dev/report-review', async (req, res, body, user) => {
+  /* Разбор жалобы: ложная, подтверждённая или предупреждение */
+  if (!isDev(user) && !isCodev(user)) return send(res, 403, { error: 'Только для команды' });
+  const num = Number(body.num);
+  const r = db.reports.find(x => x.num === num);
+  if (!r) return send(res, 404, { error: 'Протокол №' + num + ' не найден' });
+  if (r.verdict) return send(res, 400, { error: 'По жалобе уже есть решение: ' + r.verdict });
+
+  const verdict = ['false', 'valid', 'warn'].includes(body.verdict) ? body.verdict : 'warn';
+  const note = String(body.note || '').slice(0, 300);
+  const author = db.users[r.from];
+  const target = db.users[r.against];
+
+  r.verdict = verdict;
+  r.verdictBy = user.username || user.id;
+  r.verdictAt = now();
+  r.verdictNote = note;
+
+  if (verdict === 'false') {
+    /* Жалоба ложная: наказываем подавшего, возвращаем доверие обвинённому */
+    if (author) {
+      author.trust = Math.max(0, (author.trust || 0) - 15);
+      author.reportBlockUntil = now() + 7 * 86400e3;
+      serviceMessage(author.id,
+        'Жалоба №' + num + ' признана ложной.\n\n' +
+        'Доверие снижено на 15%, новые жалобы недоступны 7 дней.' +
+        (note ? '\n\nКомментарий команды: ' + note : '') +
+        '\n\nЕсли считаете решение ошибочным — напишите разработчику.');
+      push(author.id, { type: 'state' });
+    }
+    if (target) {
+      target.trust = Math.min(100, (target.trust || 0) + 10);
+      serviceMessage(target.id,
+        'Жалоба №' + num + ' против вас признана ложной. Доверие восстановлено на 10%.');
+      push(target.id, { type: 'state' });
+    }
+  } else if (verdict === 'valid') {
+    /* Жалоба подтверждена */
+    if (target) {
+      target.trust = Math.max(0, (target.trust || 0) - 25);
+      serviceMessage(target.id,
+        'Жалоба №' + num + ' против вас подтверждена командой Newchat.\n\n' +
+        'Доверие снижено на 25%.' + (note ? '\n\nПричина: ' + note : '') +
+        '\n\nПри повторных нарушениях аккаунт будет заблокирован.');
+      push(target.id, { type: 'state' });
+    }
+    if (author) {
+      author.trust = Math.min(100, (author.trust || 0) + 5);
+      author.reportBlockUntil = 0;
+      serviceMessage(author.id, 'Ваша жалоба №' + num + ' подтверждена. Доверие повышено, ограничение на жалобы снято.');
+      push(author.id, { type: 'state' });
+    }
+  } else {
+    /* Предупреждение без санкций — шанс исправиться */
+    if (target) {
+      serviceMessage(target.id,
+        'По жалобе №' + num + ' команда вынесла предупреждение без санкций.' +
+        (note ? '\n\n' + note : '') +
+        '\n\nДоверие не тронуто. Если ситуация повторится, последствия будут серьёзнее.');
+      push(target.id, { type: 'state' });
+    }
+    if (author) {
+      author.reportBlockUntil = 0;
+      serviceMessage(author.id, 'По жалобе №' + num + ' вынесено предупреждение нарушителю. Ограничение на подачу жалоб снято.');
+      push(author.id, { type: 'state' });
+    }
+  }
+  save();
+  send(res, 200, { done: ['решение по №' + num + ': ' + verdict] });
+});
+
+route('POST', '/api/dev/report-list', async (req, res, body, user) => {
+  if (!isDev(user) && !isCodev(user)) return send(res, 403, { error: 'Только для команды' });
+  const list = db.reports.slice(-25).reverse().map(r => ({
+    num: r.num, kind: r.kind, time: r.time,
+    from: r.authorUsername, against: r.peerUsername,
+    verdict: r.verdict || '', msgs: r.snapshot.length
+  }));
+  send(res, 200, { reports: list });
 });
 
 route('POST', '/api/dev/report-data', async (req, res, body, user) => {
