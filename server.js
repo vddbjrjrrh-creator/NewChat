@@ -84,6 +84,8 @@ const BOTS_PER_USER = Number(process.env.BOTS_PER_USER || 3);
 const MAX_MB = Number(process.env.MAX_UPLOAD_MB || 10);
 const MAX_BYTES = Math.round(MAX_MB * 1.37 * 1024 * 1024);
 const MEDIA_KEEP_DAYS = Number(process.env.MEDIA_KEEP_DAYS || 7);
+/* Музыка в профиле. Лежит в базе, поэтому лимит осознанный. */
+const MUSIC_MB = Number(process.env.MUSIC_MB || 12);
 
 /* ================= ХРАНИЛИЩЕ ================= */
 
@@ -843,7 +845,7 @@ function readBody(req) {
     let data = '';
     req.on('data', c => {
       data += c;
-      if (data.length > MAX_BYTES * 1.6) req.destroy(); /* явный флуд — рвём */
+      if (data.length > Math.max(MAX_BYTES, MUSIC_MB * 1.4 * 1024 * 1024) * 1.6) req.destroy();
     });
     req.on('end', () => {
       try { resolve(data ? JSON.parse(data) : {}); }
@@ -2029,6 +2031,8 @@ route('POST', '/api/dev/stats', async (req, res, body, user) => {
       stories: (db.stories || []).length,
       reports: db.reports.length,
       mediaMb: Math.round(mediaBytes / 1048576 * 10) / 10,
+      musicMb: Math.round(Object.values(db.users).reduce((a, u) => a + ((u.music && u.music.data) ? u.music.data.length : 0), 0) / 1048576 * 10) / 10,
+      musicCount: Object.values(db.users).filter(u => u.music).length,
       dbMb: Math.round(JSON.stringify(db).length / 1048576 * 10) / 10
     }
   });
@@ -2608,7 +2612,9 @@ route('POST', '/api/profile/style', async (req, res, body, user) => {
     else {
       const data = String(m.data || '');
       if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
-      if (data.length > 5600000) return send(res, 400, { error: 'Трек больше 4 МБ — выберите короче' });
+      if (data.length > MUSIC_MB * 1.37 * 1024 * 1024) {
+        return send(res, 400, { error: 'Трек больше ' + MUSIC_MB + ' МБ' });
+      }
       user.music = {
         data,
         name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60),
@@ -3016,6 +3022,7 @@ route('GET', '/api/config', async (req, res) => {
     ice: iceServers(),
     vapid: VAPID_PUBLIC,
     maxMb: MAX_MB,
+    musicMb: MUSIC_MB,
     videoDays: MEDIA_KEEP_DAYS,
     deal: { payHours: DEAL.payHours, confirmDays: DEAL.confirmDays }
   });

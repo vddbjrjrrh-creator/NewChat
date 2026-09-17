@@ -1671,7 +1671,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2054,6 +2054,7 @@ async function loadConfig(){
   try{
     const cfg=await api('/api/config');
     if(cfg.maxMb)MAX_MB=cfg.maxMb;
+    if(cfg.musicMb)MUSIC_MB=cfg.musicMb;
     if(cfg.ice&&cfg.ice.length)ICE_SERVERS=cfg.ice;
     if(cfg.vapid)VAPID_KEY=cfg.vapid;
     const tgBtn=document.getElementById('tg-btn');
@@ -2876,7 +2877,8 @@ async function devStats(){
       'Чатов: '+t.chats+' · каналов: '+t.channels+' · сообщений: '+t.msgs+'\n'+
       'Сделок: '+t.deals+' · споров: '+t.disputes+' · лотов: '+t.lots+'\n'+
       'Историй: '+t.stories+' · жалоб: '+t.reports+'\n'+
-      'Вложения: '+t.mediaMb+' МБ · вся база: '+t.dbMb+' МБ';
+      'Вложения: '+t.mediaMb+' МБ · музыка: '+(t.musicMb||0)+' МБ у '+(t.musicCount||0)+' чел.\n'+
+      'Вся база: '+t.dbMb+' МБ';
   }catch(e){}
 }
 async function devGift(){
@@ -3310,7 +3312,7 @@ async function disablePush(){
 function pushOn(){try{return localStorage.getItem('newchat_push')==='1'}catch(e){return false}}
 function togglePush(){if(pushOn())disablePush();else enablePush()}
 
-let MAX_MB=10;
+let MAX_MB=10,MUSIC_MB=12;
 /* Серверы для звонков: приходят из конфига, здесь — запасной вариант */
 let ICE_SERVERS=[
   {urls:'stun:stun.l.google.com:19302'},
@@ -4404,7 +4406,7 @@ function renderLook(){
     const m=S&&S.user&&S.user.music;
     mb.innerHTML=m
       ? musicPlayer(m,'me')+'<button class="btn ghost" style="margin-top:10px" onclick="removeMusic()">Убрать музыку</button>'
-      : '<div style="text-align:center;color:var(--ink-2);font-size:.84rem">Трек увидят все, кто откроет ваш профиль. Они смогут его послушать и скачать.</div>';
+      : '<div style="text-align:center;color:var(--ink-2);font-size:.84rem">Трек увидят все, кто откроет ваш профиль. Они смогут его послушать и скачать.<br><b style="color:var(--ink)">До '+MUSIC_MB+' МБ</b> — обычная песня помещается.</div>';
   }
 
   const tp=document.getElementById('tgl-push');
@@ -4487,7 +4489,7 @@ function pickMusic(input){
   if(!/^audio\//.test(f.type)&&!/\.(mp3|m4a|aac|ogg|wav)$/i.test(f.name)){
     toast('Нужен музыкальный файл: mp3, m4a, aac, ogg, wav');return;
   }
-  if(f.size>4*1048576){toast('Трек больше 4 МБ — выберите короче');return}
+  if(f.size>MUSIC_MB*1048576){toast('Трек больше '+MUSIC_MB+' МБ — выберите короче или сожмите');return}
   toast('Загружаем трек…');
   const fr=new FileReader();
   fr.onload=async()=>{
