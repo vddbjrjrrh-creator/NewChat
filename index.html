@@ -1788,7 +1788,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 48;
+const APP_VERSION = 49;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -1938,20 +1938,8 @@ function fmtLeft(ms){
 
 /* ============ ЗАПРОСЫ К СЕРВЕРУ ============ */
 let wakingUp=false;
-function showWaking(on){
-  let el=document.getElementById('waking');
-  if(on){
-    if(!el){
-      el=document.createElement('div');
-      el.id='waking';
-      el.style.cssText='position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);'+
-        'z-index:500;background:var(--accent);color:#fff;padding:8px 16px;border-radius:14px;font-size:.8rem;'+
-        'font-weight:700;box-shadow:0 6px 18px rgba(108,92,231,.4);display:flex;align-items:center;gap:8px';
-      el.innerHTML='<span class="pulse-dot" style="background:#fff"></span>Сервер просыпается…';
-      document.body.appendChild(el);
-    }
-  }else if(el)el.remove();
-}
+/* Пробуждение сервера происходит молча: человеку незачем знать про наш хостинг */
+function showWaking(){}
 
 /* Бесплатный сервер засыпает без нагрузки: первый запрос может идти до минуты.
    Поэтому ждём дольше и пробуем несколько раз, вместо того чтобы сразу сдаваться. */
@@ -1965,7 +1953,7 @@ async function api(path,body,opts){
 
   for(let attempt=1;attempt<=tries;attempt++){
     const ctrl=new AbortController();
-    const wait=attempt===1?20000:45000;
+    const wait=attempt===1?12000:40000;
     const timer=setTimeout(()=>ctrl.abort(),wait);
     try{
       const res=await fetch(API+path,{
@@ -1992,13 +1980,14 @@ async function api(path,body,opts){
       lastErr=e;
       if(attempt<tries){
         if(!wakingUp){wakingUp=true;showWaking(true)}
-        await new Promise(r=>setTimeout(r,1200*attempt));
+        await new Promise(r=>setTimeout(r,600*attempt));
         continue;
       }
     }
   }
-  if(wakingUp){wakingUp=false;showWaking(false)}
-  toast('Сервер не отвечает. Проверьте интернет и попробуйте ещё раз.');
+  wakingUp=false;
+  /* Фоновые обновления не шумят: человек не нажимал — не о чем сообщать */
+  if(!(opts&&opts.silent))toast('Не удалось связаться с сервером');
   throw lastErr||new Error('network');
 }
 
@@ -2171,6 +2160,7 @@ function enterApp(){
   checkUpdate();
   publishKey();
   prefetchOwnSounds();
+  loadQuests();          /* промо новой карточки видно сразу после входа */
   if(pushOn())enablePush(true);
   if(navigator.serviceWorker){
     navigator.serviceWorker.addEventListener('message',e=>{
@@ -4567,18 +4557,20 @@ async function askHelp(preset){
 /* ===== ЗАДАНИЯ НА КАРТОЧКУ ===== */
 const SHIELD_3D='<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">'+
   '<defs>'+
-    '<linearGradient id="shEdge" x1="0" y1="0" x2="1" y2="1">'+
-      '<stop offset="0%" stop-color="#FFFFFF"/><stop offset="45%" stop-color="#F0ECFF"/>'+
-      '<stop offset="100%" stop-color="#C9BEF5"/></linearGradient>'+
-    '<linearGradient id="shSide" x1="0" y1="0" x2="0" y2="1">'+
-      '<stop offset="0%" stop-color="#B7A9EE"/><stop offset="100%" stop-color="#8674DC"/></linearGradient>'+
+    '<linearGradient id="shFace" x1="0" y1="0" x2="1" y2="1">'+
+      '<stop offset="0%" stop-color="#FFFFFF"/><stop offset="38%" stop-color="#E6DEFF"/>'+
+      '<stop offset="72%" stop-color="#A18BFF"/><stop offset="100%" stop-color="#6C5CE7"/></linearGradient>'+
+    '<linearGradient id="shDeep" x1="0" y1="0" x2="0" y2="1">'+
+      '<stop offset="0%" stop-color="#7A68D8"/><stop offset="100%" stop-color="#4A3AA8"/></linearGradient>'+
+    '<radialGradient id="shGlow" cx="38%" cy="26%">'+
+      '<stop offset="0%" stop-color="#FFFFFF" stop-opacity=".9"/>'+
+      '<stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>'+
   '</defs>'+
-  '<path d="M60 16l30 11.5v20C90 67 77 80.5 60 87 43 80.5 30 67 30 47.5v-20L60 16z" '+
-    'fill="none" stroke="url(#shSide)" stroke-width="13" stroke-linejoin="round" transform="translate(2,4)"/>'+
-  '<path d="M60 16l30 11.5v20C90 67 77 80.5 60 87 43 80.5 30 67 30 47.5v-20L60 16z" '+
-    'fill="none" stroke="url(#shEdge)" stroke-width="11" stroke-linejoin="round"/>'+
-  '<path d="M60 22l24 9v17c0 15.5-10 26.5-24 32-14-5.5-24-16.5-24-32V31l24-9z" '+
-    'fill="none" stroke="#fff" stroke-width="2" opacity=".35"/>'+
+  '<path d="M62 20l30 11.5v20C92 71 79 84.5 62 91 45 84.5 32 71 32 51.5v-20L62 20z" fill="url(#shDeep)" opacity=".55"/>'+
+  '<path d="M60 16l30 11.5v20C90 67 77 80.5 60 87 43 80.5 30 67 30 47.5v-20L60 16z" fill="url(#shFace)"/>'+
+  '<path d="M60 27l21 8v14.5C81 63 71.5 73 60 78 48.5 73 39 63 39 49.5V35l21-8z" fill="#F4F1FF" opacity=".28"/>'+
+  '<path d="M60 16l30 11.5v20C90 67 77 80.5 60 87 43 80.5 30 67 30 47.5v-20L60 16z" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>'+
+  '<ellipse cx="48" cy="36" rx="13" ry="9" fill="url(#shGlow)"/>'+
   '</svg>';
 
 let questData=null,questTimer=null;
@@ -4589,7 +4581,7 @@ function fmtLeft(ms){
 async function loadQuests(start){
   if(!S||!token)return;
   try{
-    const r=await api('/api/quests',start?{start:1}:{});
+    const r=await api('/api/quests',start?{start:1}:{},start?{}:{silent:true,tries:2});
     questData=r;
     updateQuestBar();
     if(r.justGot)celebrateAegis();
@@ -5614,7 +5606,7 @@ async function syncAll(){
   if(syncBusy){syncQueued=true;return}
   syncBusy=true;
   try{
-    const r=await api('/api/market');
+    const r=await api('/api/market',null,{silent:true,tries:2});
     if(r.market)S.market=r.market;
     if(r.giftMarket)S.giftMarket=r.giftMarket;
     if(r.usernames)S.usernames=r.usernames;

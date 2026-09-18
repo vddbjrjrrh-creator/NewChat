@@ -2118,6 +2118,8 @@ route('POST', '/api/dev/gift-card', async (req, res, body, user) => {
 
   const type = String(body.type || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 24);
   if (!type) return send(res, 400, { error: 'Укажите код карточки латиницей' });
+  /* Выдача снимает запрет, если карточку раньше изымали */
+  if (target.giftDenied) target.giftDenied = target.giftDenied.filter(t => t !== type);
 
   db.gifts = db.gifts || [];
   db.giftTypes = db.giftTypes || {};
@@ -3020,6 +3022,7 @@ function grantDevCoin(user) {
   let changed = false;
   const devs = Object.values(db.users).filter(u => !u.isBot && (isDev(u) || isCodev(u)));
   for (const d of devs) {
+    if ((d.giftDenied || []).includes('devcoin')) continue;
     if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
     const minted = db.gifts.filter(g => g.type === 'devcoin').length;
     if (minted >= GIFT_TYPES.devcoin.total) break;
@@ -3048,6 +3051,7 @@ const QUEST_MS = 60 * 60e3;
 
 function grantAegis(user) {
   db.gifts = db.gifts || [];
+  if ((user.giftDenied || []).includes('aegis')) return false;
   if (db.gifts.some(g => g.type === 'aegis' && g.owner === user.id)) return false;
   if (!user.questStart || now() - user.questStart > QUEST_MS) return false;
   if (!aegisQuests(user).every(q => q.done)) return false;
@@ -3105,10 +3109,13 @@ route('POST', '/api/dev/gift-take', async (req, res, body, user) => {
   if (!own.length) return send(res, 404, { error: type ? ('У @' + uname + ' нет карточки «' + type + '»') : ('У @' + uname + ' нет карточек') });
 
   const taken = [];
+  target.giftDenied = target.giftDenied || [];
   for (const g of own) {
     if (g.frozen) { taken.push('«' + g.type + '» в сделке — пропущена'); continue; }
     const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
     db.gifts = db.gifts.filter(x => x.id !== g.id);
+    /* Помечаем, иначе карточка выдастся заново на следующем же запросе */
+    if (!target.giftDenied.includes(g.type)) target.giftDenied.push(g.type);
     taken.push((t.name || g.type) + ' №' + g.num);
   }
   save();
@@ -3216,6 +3223,72 @@ route('POST', '/api/push/peek', async (req, res, body, user) => {
     }
   }
   send(res, 200, { msg: best });
+});
+
+
+/* Оформление профиля: описание, обложка, музыка, свои звуки */
+route('POST', '/api/profile/style', async (req, res, body, user) => {
+  if (body.ringtone !== undefined) {
+    const r = body.ringtone;
+    if (!r) { user.ringtone = null; }
+    else {
+      const data = String(r.data || '');
+      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
+      if (data.length > 4200000) return send(res, 400, { error: 'Рингтон больше 3 МБ — возьмите короче' });
+      user.ringtone = { data, name: String(r.name || 'Свой рингтон').replace(/\.[a-z0-9]+$/i, '').slice(0, 50) };
+    }
+  }
+  if (body.msgSound !== undefined) {
+    const m = body.msgSound;
+    if (!m) { user.msgSound = null; }
+    else {
+      const data = String(m.data || '');
+      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
+      if (data.length > 700000) return send(res, 400, { error: 'Звук сообщения больше 500 КБ — возьмите короче' });
+      user.msgSound = { data, name: String(m.name || 'Свой звук').replace(/\.[a-z0-9]+$/i, '').slice(0, 50) };
+    }
+  }
+  if (body.music !== undefined) {
+    const m = body.music;
+    if (!m) { user.music = null; }
+    else {
+      const data = String(m.data || '');
+      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
+      if (data.length > MUSIC_MB * 1.37 * 1024 * 1024) return send(res, 400, { error: 'Трек больше ' + MUSIC_MB + ' МБ' });
+      user.music = { data, name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60), size: Math.round(data.length * 0.75) };
+    }
+  }
+  if (body.coverImg !== undefined) {
+    const img = String(body.coverImg || '');
+    if (!img) { user.coverImg = null; }
+    else {
+      if (!isPremium(user)) return send(res, 403, { error: 'Своя обложка доступна с премиумом' });
+      if (!/^data:image\/(jpeg|png|webp);base64,/.test(img) || img.length > 900000) {
+        return send(res, 400, { error: 'Картинка не подходит: до 600 КБ' });
+      }
+      user.coverImg = img;
+    }
+  }
+  if (body.cover !== undefined) {
+    const n = Math.max(0, Math.min(11, Number(body.cover) || 0));
+    if (n > 5 && !isPremium(user)) return send(res, 403, { error: 'Эта обложка доступна с премиумом' });
+    user.cover = n;
+    user.coverImg = null;
+  }
+  if (body.bio !== undefined) user.bio = String(body.bio || '').slice(0, 140);
+  if (body.icon !== undefined) {
+    if (!isPremium(user)) return send(res, 403, { error: 'Смена иконки доступна с премиумом' });
+    user.icon = String(body.icon || '').slice(0, 20);
+  }
+  save();
+  send(res, 200, { state: fullState(user) });
+});
+
+/* Сам звук отдаём отдельно: в общем состоянии он был бы слишком тяжёлым */
+route('POST', '/api/profile/sound', async (req, res, body, user) => {
+  const kind = body.kind === 'msg' ? 'msgSound' : 'ringtone';
+  const snd = user[kind];
+  send(res, 200, { data: snd ? snd.data : '', name: snd ? snd.name : '' });
 });
 
 const server = http.createServer(async (req, res) => {
