@@ -1788,7 +1788,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 49;
+const APP_VERSION = 50;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -4574,10 +4574,6 @@ const SHIELD_3D='<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">'
   '</svg>';
 
 let questData=null,questTimer=null;
-function fmtLeft(ms){
-  const t=Math.max(0,Math.floor(ms/1000));
-  return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
-}
 async function loadQuests(start){
   if(!S||!token)return;
   try{
@@ -5392,7 +5388,7 @@ function openPremium(){
 
 /* ============ БИРЖА ============ */
 function renderCardMarket(){
-  const box=document.getElementById('market-cards');
+  const box=document.getElementById('my-cards');
   if(!box)return;
   const lots=(S&&S.giftMarket)||[];
   const mine=((S&&S.user&&S.user.gifts)||[]).filter(g=>!g.forSale);
@@ -5799,7 +5795,6 @@ function renderDeco(){
   document.getElementById('emoji-row').innerHTML=EMOJIS.map(e=>
     '<div class="emoji-opt'+(S.user.status===e?' on':'')+'" onclick="setStatus(\''+e+'\')">'+(e||'✕')+'</div>').join('');
 }
-function setCover(i){S.user.cover=i;renderProfile();api('/api/profile/update',{cover:i}).catch(()=>{})}
 function setAvaC(i){S.user.ava=i;renderProfile();api('/api/profile/update',{ava:i}).catch(()=>{})}
 function setStatus(e){S.user.status=e;renderProfile();api('/api/profile/update',{status:e}).catch(()=>{})}
 function setVType(t){
