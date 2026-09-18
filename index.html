@@ -272,6 +272,27 @@ html.lite .quest-ic svg{animation:none!important}
 .ph-save{position:absolute;right:8px;bottom:8px;width:32px;height:32px;border-radius:50%;
   background:rgba(20,18,40,.6);backdrop-filter:blur(6px);border:none;cursor:pointer;
   display:flex;align-items:center;justify-content:center;color:#fff}
+
+/* Своё окно вопроса */
+.file-hidden{position:fixed!important;left:-9999px!important;top:-9999px!important;
+  width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;
+  overflow:hidden!important;clip:rect(0 0 0 0)!important;clip-path:inset(50%)!important;
+  font-size:0!important;color:transparent!important;border:0!important}
+.ask-veil{position:fixed;inset:0;z-index:900;background:rgba(18,16,40,.45);
+  backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;
+  padding:24px;opacity:0;transition:opacity .2s}
+.ask-veil.show{opacity:1}
+.ask-box{background:var(--card);border-radius:22px;padding:22px 20px 18px;max-width:340px;width:100%;
+  box-shadow:0 20px 50px rgba(20,18,50,.3);transform:scale(.94);transition:transform .22s cubic-bezier(.22,1.2,.36,1)}
+.ask-veil.show .ask-box{transform:scale(1)}
+.ask-box b{display:block;font-size:1.05rem;margin-bottom:6px}
+.ask-box p{font-size:.88rem;color:var(--ink-2);line-height:1.5;margin-bottom:16px}
+.ask-btns{display:flex;gap:8px}
+.ask-btns button{flex:1;border:none;border-radius:14px;padding:12px;font-family:inherit;
+  font-size:.92rem;font-weight:800;cursor:pointer}
+.ask-no{background:var(--glass-2);color:var(--ink-2);border:1px solid var(--edge)!important}
+.ask-yes{background:var(--accent);color:#fff}
+.ask-yes.danger{background:var(--danger)}
 .req-card{align-self:center;max-width:88%;margin:8px 0;padding:14px 16px;border-radius:18px;
   background:var(--glass-2);border:1px solid var(--edge);text-align:center;
   box-shadow:0 6px 18px rgba(31,32,64,.1);animation:msgIn .3s}
@@ -810,10 +831,13 @@ body{
 .story .ring.seen{background:#D6D9E6}
 .story .ring>div{width:100%;height:100%;border-radius:50%;border:2.5px solid var(--bg,#EEF0F7);background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:1.1rem}
 .story p{font-size:.66rem;color:var(--ink-2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.story-view{position:fixed;inset:0;background:#000;z-index:200;display:none;flex-direction:column}
+/* Просмотр истории закрывает всё: кот и промо-плашка не мешают кнопке выхода */
+.story-view{position:fixed;inset:0;background:#000;z-index:700;display:none;flex-direction:column}
+body.story-open .chatty,body.story-open .chatty-bubble,body.story-open .quest-bar,body.story-open .tabbar{display:none!important}
+.story-view .hdr,.story-view .row{padding-top:calc(6px + env(safe-area-inset-top))}
 .story-view.on{display:flex}
 .story-view img{flex:1;object-fit:contain;min-height:0}
-.photo-view{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:200;display:none;align-items:center;justify-content:center}
+.photo-view{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:700;display:none;align-items:center;justify-content:center}
 .photo-view.on{display:flex}
 .photo-view img{max-width:100%;max-height:100%}
 .ava[data-dot="1"]::after{content:'';position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:#31C48D;border:2.5px solid var(--bg,#EEF0F7)}
@@ -1174,14 +1198,14 @@ body{
       <label class="btn ghost" for="cover-file" style="display:block;text-align:center;cursor:pointer;margin:10px 16px">
         Своя картинка из галереи
       </label>
-      <input type="file" id="cover-file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickCoverFile(this)">
+      <input class="file-hidden" type="file" id="cover-file" accept="image/*" onchange="pickCoverFile(this)">
 
       <div class="w-section">Музыка в профиле</div>
       <div class="glass-card" id="music-box" style="margin:8px 16px;padding:14px 16px"></div>
       <label class="btn ghost" for="music-file" style="display:block;text-align:center;cursor:pointer;margin:8px 16px">
         Выбрать трек из файлов
       </label>
-      <input type="file" id="music-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickMusic(this)">
+      <input class="file-hidden" type="file" id="music-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" onchange="pickMusic(this)">
 
       <div class="w-section">О себе</div>
       <div class="field" style="margin:8px 16px">
@@ -1202,7 +1226,7 @@ body{
       <label class="btn ghost" for="ring-file" style="display:block;text-align:center;cursor:pointer;margin:8px 16px">
         Свой рингтон из файлов
       </label>
-      <input type="file" id="ring-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickRing(this)">
+      <input class="file-hidden" type="file" id="ring-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" onchange="pickRing(this)">
 
       <div class="w-section">Звук уведомлений</div>
       <div id="snd-list" style="margin:8px 16px"></div>
@@ -1210,7 +1234,7 @@ body{
       <label class="btn ghost" for="msgsnd-file" style="display:block;text-align:center;cursor:pointer;margin:8px 16px">
         Свой звук сообщения
       </label>
-      <input type="file" id="msgsnd-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickMsgSound(this)">
+      <input class="file-hidden" type="file" id="msgsnd-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" onchange="pickMsgSound(this)">
 
       <div class="w-section">Производительность</div>
       <div class="set-row glass-card">
@@ -1325,9 +1349,9 @@ body{
     </div>
     <div class="composer">
       <label class="icon-btn" for="msg-photo" style="flex:none;cursor:pointer" id="media-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="5" width="18" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3 3 4-4 4 4"/></svg></label>
-      <input type="file" id="msg-photo" accept="image/*,video/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendMedia(this)">
+      <input class="file-hidden" type="file" id="msg-photo" accept="image/*,video/*" onchange="sendMedia(this)">
       <label class="icon-btn" for="msg-file" style="flex:none;cursor:pointer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M21 12.5l-8.5 8.5a5 5 0 01-7-7l9-9a3.5 3.5 0 015 5l-9 9a2 2 0 01-3-3l8-8"/></svg></label>
-      <input type="file" id="msg-file" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="sendFile(this)">
+      <input class="file-hidden" type="file" id="msg-file" onchange="sendFile(this)">
       <input placeholder="Сообщение" id="composer-input">
       <button class="icon-btn" style="flex:none" id="mic-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
       <button class="send" onclick="sendMsg()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="20" height="20"><path d="M4 12l16-7-4 7 4 7-16-7z"/></svg></button>
@@ -1354,7 +1378,7 @@ body{
       <label class="btn ghost" for="wp-file" style="display:block;text-align:center;cursor:pointer;margin-bottom:12px">
         Выбрать из галереи
       </label>
-      <input type="file" id="wp-file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickWpFile(this)">
+      <input class="file-hidden" type="file" id="wp-file" accept="image/*" onchange="pickWpFile(this)">
       <div class="law-note" style="margin-bottom:10px">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
         «Для обоих» — собеседник получит предложение и решит сам.
@@ -1549,7 +1573,7 @@ body{
       <div class="profile-cover" id="p-cover" onclick="openSheet('sheet-deco')" style="cursor:pointer"></div>
       <div class="profile-top">
         <label class="ava" id="p-ava" for="ava-file" style="cursor:pointer;background-size:cover;background-position:center"><span id="p-initial"></span><span class="status-emoji" id="p-status"></span></label>
-        <input type="file" id="ava-file" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="uploadAvatar(this)">
+        <input class="file-hidden" type="file" id="ava-file" accept="image/*" onchange="uploadAvatar(this)">
         <div class="val" style="font-size:.72rem;color:var(--ink-2);margin-top:4px">нажмите на аватар, чтобы поставить фото</div>
         <h2><span id="p-name"></span> <span class="vcheck" id="p-vcheck" style="display:none;width:19px;height:19px"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span></h2>
         <div class="h mono" id="p-handle"></div>
@@ -1743,7 +1767,7 @@ body{
   </div>
 
   <div class="toast" id="toast"></div>
-<div class="photo-view" id="photo-view" onclick="this.classList.remove('on')"><img id="photo-view-img"></div>
+<div class="photo-view" id="photo-view" onclick="closePhotoView()"><img id="photo-view-img"></div>
 <div class="rec-ring" id="rec-ring">
   <video id="rec-preview" autoplay playsinline muted></video>
   <div class="rec-timer" id="rec-timer">0:00</div>
@@ -1776,12 +1800,12 @@ body{
     <div class="ava" id="sv-ava" style="width:36px;height:36px;font-size:.9rem"></div>
     <div style="flex:1"><b id="sv-name" style="font-size:.9rem"></b><div id="sv-time" style="font-size:.7rem;opacity:.7"></div></div>
     <button class="icon-btn" id="sv-del" style="color:#fff" onclick="deleteStory()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
-    <button class="icon-btn" style="color:#fff" onclick="document.getElementById('story-view').classList.remove('on')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="22" height="22"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <button class="icon-btn" style="color:#fff" onclick="closeStory()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="22" height="22"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>
   <img id="sv-img" onclick="nextStory()">
   <div id="sv-text" style="color:#fff;text-align:center;padding:14px 20px calc(20px + env(safe-area-inset-bottom));font-size:.95rem"></div>
 </div>
-<input type="file" id="story-file" accept="image/*,video/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0)" onchange="postStory(this)">
+<input class="file-hidden" type="file" id="story-file" accept="image/*,video/*" onchange="postStory(this)">
 </div>
 
 <script>
@@ -1835,7 +1859,7 @@ try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.class
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 try{if(localStorage.getItem('newchat_lite')==='1')document.documentElement.classList.add('lite')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 53;
+const APP_VERSION = 55;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -1846,7 +1870,7 @@ async function videoDiag(){
   const recs=['video/mp4','video/webm;codecs=h264,opus','video/webm;codecs=vp8,opus','video/webm']
     .map(t=>{try{return t+': '+(MediaRecorder.isTypeSupported(t)?'да':'нет')}catch(e){return t+': ошибка'}}).join('\n');
   const chosen=pickVideoMime();
-  alert('ВОСПРОИЗВЕДЕНИЕ:\n'+play+'\n\nЗАПИСЬ:\n'+recs+'\n\nВыбран для кружков:\n'+(chosen||'ничего не подошло')+'\n\nСкриншот этого окна — разработчику.');
+  sayBox('ВОСПРОИЗВЕДЕНИЕ:\n'+play+'\n\nЗАПИСЬ:\n'+recs+'\n\nВыбран для кружков:\n'+(chosen||'ничего не подошло')+'\n\nСкриншот этого окна — разработчику.');
 }
 async function manualUpdateCheck(){
   toast('Проверяем…');
@@ -2101,6 +2125,35 @@ function closeSheets(){
   document.querySelectorAll('.sheet-veil').forEach(v=>v.classList.remove('show'));
   document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('show'));
 }
+
+/* ===== СВОИ ДИАЛОГИ =====
+   Системные confirm и alert в Android-оболочке ломают кириллицу,
+   поэтому спрашиваем и предупреждаем своим окном. */
+function askBox(text,opts){
+  return new Promise(resolve=>{
+    const o=opts||{};
+    const veil=document.createElement('div');
+    veil.className='ask-veil';
+    veil.innerHTML='<div class="ask-box">'+
+      (o.title?'<b>'+esc(o.title)+'</b>':'')+
+      '<p>'+esc(text).replace(/\n/g,'<br>')+'</p>'+
+      '<div class="ask-btns">'+
+        (o.single?'':'<button class="ask-no">'+esc(o.no||'Отмена')+'</button>')+
+        '<button class="ask-yes'+(o.danger?' danger':'')+'">'+esc(o.yes||'Да')+'</button>'+
+      '</div></div>';
+    document.body.appendChild(veil);
+    const close=v=>{veil.classList.remove('show');setTimeout(()=>veil.remove(),200);resolve(v)};
+    veil.querySelector('.ask-yes').onclick=()=>close(true);
+    const no=veil.querySelector('.ask-no');
+    if(no)no.onclick=()=>close(false);
+    veil.onclick=e=>{if(e.target===veil)close(false)};
+    requestAnimationFrame(()=>veil.classList.add('show'));
+  });
+}
+function sayBox(text,title){
+  return askBox(text,{single:true,yes:'Понятно',title:title});
+}
+
 function toast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg;t.classList.add('show');
@@ -2232,7 +2285,7 @@ function enterApp(){
 }
 async function askNotifPerm(btn){
   if(typeof Notification==='undefined'){
-    alert('В этом браузере уведомления не работают. Откройте Newchat в Chrome:\n\n1. Скопируйте адрес из строки браузера\n2. Вставьте в Chrome\n3. Меню Chrome → «Добавить на главный экран» — будет как приложение');
+    sayBox('В этом браузере уведомления не работают. Откройте Newchat в Chrome:\n\n1. Скопируйте адрес из строки браузера\n2. Вставьте в Chrome\n3. Меню Chrome → «Добавить на главный экран» — будет как приложение');
     return;
   }
   const p=await Notification.requestPermission();
@@ -2243,7 +2296,7 @@ async function askNotifPerm(btn){
 }
 async function askMicPerm(btn){
   if(!navigator.mediaDevices){
-    alert('Этот браузер не даёт доступ к микрофону. Откройте Newchat в Chrome — там голосовые и звонки работают.');
+    sayBox('Этот браузер не даёт доступ к микрофону. Откройте Newchat в Chrome — там голосовые и звонки работают.');
     return;
   }
   try{
@@ -2251,7 +2304,7 @@ async function askMicPerm(btn){
     st.getTracks().forEach(t=>t.stop());
     btn.style.opacity='.45';toast('Микрофон разрешён');
   }catch(e){
-    alert('Доступ к микрофону не дали. Если браузер не спрашивал:\n\nНастройки браузера → Настройки сайтов → Микрофон → разрешить для этого сайта.\n\nИли откройте Newchat в Chrome.');
+    sayBox('Доступ к микрофону не дали. Если браузер не спрашивал:\n\nНастройки браузера → Настройки сайтов → Микрофон → разрешить для этого сайта.\n\nИли откройте Newchat в Chrome.');
   }
 }
 
@@ -2458,8 +2511,8 @@ async function resendCode(){
     toast('Код отправлен заново');
   }catch(e){}
 }
-function logout(silent){
-  if(!silent&&!confirm('Выйти из аккаунта?'))return;
+async function logout(silent){
+  if(!silent&&!await askBox('Выйти из аккаунта?'))return;
   try{if(token&&!silent)api('/api/auth/logout',{}).catch(()=>{})}catch(e){} /* убить сессию на сервере */
   tokenStore.clear();token=null;S=null;
   if(ws){try{ws.close()}catch(e){}ws=null}
@@ -2740,7 +2793,7 @@ async function toggleSecret(){
   const c=S.chats.find(x=>x.id===currentChat);
   if(!c)return;
   const on=!c.secret;
-  if(on&&!confirm('Включить секретный чат?\n\nСообщения будут шифроваться на устройствах — сервер не сможет их прочитать.\nНо пожаловаться на скам или докс в таком чате будет нельзя: слепка переписки не останется.'))return;
+  if(on&&!await askBox('Включить секретный чат?\n\nСообщения будут шифроваться на устройствах — сервер не сможет их прочитать.\nНо пожаловаться на скам или докс в таком чате будет нельзя: слепка переписки не останется.'))return;
   try{
     if(on){
       await publishKey();
@@ -2766,7 +2819,7 @@ async function cycleTtl(){
   }catch(e){}
 }
 async function clearChat(){
-  if(!confirm('Очистить историю у себя? У собеседника переписка останется.'))return;
+  if(!await askBox('Очистить историю у себя? У собеседника переписка останется.'))return;
   try{
     const r=await api('/api/chats/clear',{chatId:currentChat});
     S.chats=r.chats;closeSheets();
@@ -2776,7 +2829,7 @@ async function clearChat(){
   }catch(e){}
 }
 async function deleteChat(){
-  if(!confirm('Удалить чат? Он пропадёт из вашего списка. Копия хранится на сервере для жалоб «Докс» и «Скам».'))return;
+  if(!await askBox('Удалить чат? Он пропадёт из вашего списка. Копия хранится на сервере для жалоб «Докс» и «Скам».'))return;
   try{
     const r=await api('/api/chats/delete',{chatId:currentChat});
     S.chats=r.chats;closeSheets();go('s-chats');
@@ -2785,7 +2838,7 @@ async function deleteChat(){
 }
 async function deleteChannel(){
   const c=S.chats.find(x=>x.id===currentChat);
-  if(!confirm('Удалить канал «'+((c.peer||{}).name||'')+'» навсегда? Он пропадёт у всех '+(c.subs||1)+' подписчиков, юзернейм освободится.'))return;
+  if(!await askBox('Удалить канал «'+((c.peer||{}).name||'')+'» навсегда? Он пропадёт у всех '+(c.subs||1)+' подписчиков, юзернейм освободится.'))return;
   try{
     const r=await api('/api/channels/delete',{chatId:currentChat});
     S.chats=r.chats;closeSheets();go('s-chats');
@@ -2803,7 +2856,7 @@ async function muteChat(){
 async function blockPeer(){
   const c=S.chats.find(x=>x.id===currentChat);
   const on=!c.blocked;
-  if(on&&!confirm('Заблокировать '+(c.peer||{}).name+'? Он(а) не сможет вам писать.'))return;
+  if(on&&!await askBox('Заблокировать '+(c.peer||{}).name+'? Он(а) не сможет вам писать.'))return;
   try{
     const r=await api('/api/users/block',{userId:(c.peer||{}).id,on});
     S.chats=r.chats;closeSheets();
@@ -2812,7 +2865,7 @@ async function blockPeer(){
   }catch(e){}
 }
 async function leaveChannel(id){
-  if(!confirm('Отписаться от канала?'))return;
+  if(!await askBox('Отписаться от канала?'))return;
   try{
     const r=await api('/api/channels/leave',{chatId:id});
     S.chats=r.chats;go('s-chats');
@@ -2992,6 +3045,17 @@ function savePhoto(id){
     document.body.appendChild(a);a.click();a.remove();
     toast('Сохранено в Загрузки');
   }catch(e){toast('Не удалось сохранить')}
+}
+function closePhotoView(){
+  const v=document.getElementById('photo-view');
+  if(v)v.classList.remove('on');
+  document.body.classList.remove('story-open');
+}
+function closeStory(){
+  const v=document.getElementById('story-view');
+  if(v)v.classList.remove('on');
+  document.body.classList.remove('story-open');
+  try{const vid=v&&v.querySelector('video');if(vid)vid.pause()}catch(e){}
 }
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
@@ -3228,7 +3292,7 @@ async function devGift(){
   }catch(e){}
 }
 async function devPurge(){
-  if(!confirm('Удалить ВСЕ видео, кружки и файлы у всех пользователей? Освободит место в базе.'))return;
+  if(!await askBox('Удалить ВСЕ видео, кружки и файлы у всех пользователей? Освободит место в базе.'))return;
   try{
     const r=await api('/api/dev/purge',{});
     toast('Освобождено '+r.freedMb+' МБ, удалено вложений: '+r.count);
@@ -3242,7 +3306,7 @@ async function devTrust(){
 }
 async function devBan(on){
   const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
-  if(on&&!confirm('Забанить @'+username+'? Он не сможет пользоваться Newchat вообще.'))return;
+  if(on&&!await askBox('Забанить @'+username+'? Он не сможет пользоваться Newchat вообще.'))return;
   devAct({ban:on});
 }
 let gcRarity={rarity:'Редкая',rarityNum:3};
@@ -3266,7 +3330,7 @@ async function devReview(verdict){
   const num=document.getElementById('rv-num').value.trim();
   if(!num){toast('Введите номер протокола');return}
   const names={false:'ложной',warn:'предупреждением',valid:'подтверждённой'};
-  if(!confirm('Признать жалобу №'+num+' '+names[verdict]+'?'))return;
+  if(!await askBox('Признать жалобу №'+num+' '+names[verdict]+'?'))return;
   try{
     const r=await api('/api/dev/report-review',{num,verdict,note:document.getElementById('rv-note').value});
     document.getElementById('rv-note').value='';
@@ -3309,7 +3373,7 @@ async function devGiftTake(){
   const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
   const type=document.getElementById('gc-type').value.trim();
   if(!username){toast('Введите юзернейм в поле сверху');return}
-  if(!confirm('Забрать у @'+username+(type?' карточку «'+type+'»':' ВСЕ карточки')+'?'))return;
+  if(!await askBox('Забрать у @'+username+(type?' карточку «'+type+'»':' ВСЕ карточки')+'?'))return;
   try{
     const r=await api('/api/dev/gift-take',{username,type});
     toast(r.done.join(', '));
@@ -3328,7 +3392,7 @@ async function devGiftTypes(){
 async function devBroadcast(){
   const text=document.getElementById('bc-text').value.trim();
   if(!text){toast('Введите текст');return}
-  if(!confirm('Отправить это ВСЕМ пользователям от имени Newchat?'))return;
+  if(!await askBox('Отправить это ВСЕМ пользователям от имени Newchat?'))return;
   try{
     const r=await api('/api/dev/broadcast',{text});
     document.getElementById('bc-text').value='';
@@ -3366,6 +3430,7 @@ function saveFile(id){
 function viewPhoto(src){
   document.getElementById('photo-view-img').src=src;
   document.getElementById('photo-view').classList.add('on');
+  document.body.classList.add('story-open');
 }
 function shrinkImage(file,maxSide,q,cb){
   const img=new Image();
@@ -3936,7 +4001,7 @@ async function startWavRec(btn){
   }};
 }
 async function deleteMsg(id){
-  if(!confirm('Удалить сообщение? Копия останется для жалоб.'))return;
+  if(!await askBox('Удалить сообщение? Копия останется для жалоб.'))return;
   try{
     await api('/api/messages/delete',{chatId:currentChat,messageId:id});
     const c=S.chats.find(x=>x.id===currentChat);
@@ -4092,7 +4157,7 @@ async function dealAct(id,act){
     cancel:'Отменить сделку?',
     dispute:'Открыть спор? Сделку проверит модерация.'
   }[act];
-  if(conf&&!confirm(conf))return;
+  if(conf&&!await askBox(conf))return;
   try{
     const r=await api('/api/deals/'+act,{dealId:id});
     if(r.state)S=r.state;
@@ -4140,7 +4205,7 @@ async function saveReq(){
   }catch(e){}
 }
 async function deleteReq(){
-  if(!confirm('Удалить реквизиты? Ваши лоты снимутся с продажи.'))return;
+  if(!await askBox('Удалить реквизиты? Ваши лоты снимутся с продажи.'))return;
   try{
     await api('/api/profile/requisites/delete',{});
     await refresh();closeSheets();
@@ -4248,7 +4313,7 @@ async function createBot(){
   }catch(e){}
 }
 async function deleteBot(id){
-  if(!confirm('Удалить бота? Токен перестанет работать.'))return;
+  if(!await askBox('Удалить бота? Токен перестанет работать.'))return;
   try{
     const r=await api('/api/bots/delete',{botId:id});
     S.bots=r.bots;renderBots();
@@ -4515,12 +4580,13 @@ function openStories(i){
   svUser=i;svIdx=0;
   showStory();
   document.getElementById('story-view').classList.add('on');
+  document.body.classList.add('story-open');
 }
 function showStory(){
   const g=(S.stories||[])[svUser];
-  if(!g){document.getElementById('story-view').classList.remove('on');return}
+  if(!g){closeStory();return}
   const it=g.items[svIdx];
-  if(!it){document.getElementById('story-view').classList.remove('on');return}
+  if(!it){closeStory();return}
   const u=g.user||{};
   const av=document.getElementById('sv-ava');
   if(u.photo){av.style.background='url('+u.photo+') center/cover';av.textContent=''}
@@ -4623,11 +4689,11 @@ function shrinkSmart(file,maxBytes,cb){
 async function deleteStory(){
   const g=(S.stories||[])[svUser];
   const it=g&&g.items[svIdx];
-  if(!it||!confirm('Удалить историю?'))return;
+  if(!it||!await askBox('Удалить историю?'))return;
   try{
     const r=await api('/api/stories/delete',{id:it.id});
     S.stories=r.stories;renderStories();
-    document.getElementById('story-view').classList.remove('on');
+    closeStory();
   }catch(e){}
 }
 
@@ -5350,7 +5416,7 @@ function renderSettings(){
 }
 async function toggleAnon(){
   const on=!S.user.anonMode;
-  if(on&&!confirm('Включить суперанонимность? Новые люди не смогут вас найти и написать первыми. Текущие чаты сохранятся.'))return;
+  if(on&&!await askBox('Включить суперанонимность? Новые люди не смогут вас найти и написать первыми. Текущие чаты сохранятся.'))return;
   try{
     const r=await api('/api/profile/settings',{anon:on});
     S.user.anonMode=r.anon;renderSettings();
@@ -5663,7 +5729,7 @@ async function unsellCard(id){
   }catch(e){}
 }
 async function buyCard(id,name,price){
-  if(!confirm('Купить «'+name+'» за '+price.toLocaleString('ru')+' ₽?\n\nОткроется сделка: переведёте деньги продавцу по его реквизитам, после подтверждения карточка станет вашей.'))return;
+  if(!await askBox('Купить «'+name+'» за '+price.toLocaleString('ru')+' ₽?\n\nОткроется сделка: переведёте деньги продавцу по его реквизитам, после подтверждения карточка станет вашей.'))return;
   try{
     const r=await api('/api/gifts/buy',{id});
     if(r.state)S=r.state;
@@ -5726,7 +5792,7 @@ function openSell(u){
   openSheet('sheet-sell');
 }
 async function deleteUname(u){
-  if(!confirm('Удалить @'+u+'? Слот освободится, а юзернейм сможет занять кто угодно.'))return;
+  if(!await askBox('Удалить @'+u+'? Слот освободится, а юзернейм сможет занять кто угодно.'))return;
   try{
     const r=await api('/api/usernames/delete',{username:u});
     S.usernames=r.usernames;if(r.market)S.market=r.market;renderMarket();renderProfile();

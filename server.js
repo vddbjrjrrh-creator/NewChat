@@ -398,7 +398,7 @@ function chatView(c, userId) {
 function userChats(userId) {
   return Object.values(db.chats)
     .filter(c => c.members.includes(userId))
-    .filter(c => !(c.hiddenFor || []).includes(userId))
+    .filter(c => Array.isArray(c.hiddenFor) ? !c.hiddenFor.includes(userId) : true)
     .map(c => chatView(c, userId))
     .sort((a, b) => {
       const la = a.msgs[a.msgs.length - 1], lb = b.msgs[b.msgs.length - 1];
@@ -3356,8 +3356,8 @@ route('POST', '/api/chats/clear', async (req, res, body, user) => {
   /* Чистим историю только у себя: у собеседника переписка остаётся */
   const chat = db.chats[String(body.chatId || '')];
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  chat.clearedFor = chat.clearedFor || {};
-  chat.clearedFor[user.id] = now();
+  if (!chat.clearedAt || Array.isArray(chat.clearedAt)) chat.clearedAt = {};
+  chat.clearedAt[user.id] = now();
   save();
   send(res, 200, { chats: userChats(user.id) });
 });
@@ -3365,10 +3365,11 @@ route('POST', '/api/chats/clear', async (req, res, body, user) => {
 route('POST', '/api/chats/delete', async (req, res, body, user) => {
   const chat = db.chats[String(body.chatId || '')];
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  chat.hiddenFor = chat.hiddenFor || {};
-  chat.hiddenFor[user.id] = now();
-  chat.clearedFor = chat.clearedFor || {};
-  chat.clearedFor[user.id] = now();
+  /* hiddenFor — массив: так его читает userChats */
+  if (!Array.isArray(chat.hiddenFor)) chat.hiddenFor = [];
+  if (!chat.hiddenFor.includes(user.id)) chat.hiddenFor.push(user.id);
+  if (!chat.clearedAt || Array.isArray(chat.clearedAt)) chat.clearedAt = {};
+  chat.clearedAt[user.id] = now();
   save();
   send(res, 200, { chats: userChats(user.id) });
 });
@@ -3507,43 +3508,42 @@ function clientIp(req) {
 }
 
 const LIMITS = {
-  perMinute: 240,        /* обычных запросов в минуту с одного адреса */
-  writesPerMinute: 60,   /* отправок сообщений, лотов и прочих записей */
-  signupsPerHour: 5,     /* попыток регистрации с одного адреса */
-  banMinutes: 10
+  /* Лимиты щедрые: у сотовых операторов за одним адресом сидят тысячи людей,
+     поэтому режем только явный флуд, а не живых пользователей. */
+  perMinuteIp: 1200,      /* все запросы с одного адреса */
+  perMinuteUser: 300,     /* запросы одного аккаунта */
+  writesPerMinute: 120,   /* записей от одного аккаунта */
+  authPerMinute: 20,      /* запросов кода входа с одного адреса */
+  banMinutes: 5
 };
 
-function rateCheck(req, url) {
+function rateCheck(req, url, userId) {
   const ip = clientIp(req);
   const t = Date.now();
+  const key = userId ? 'u:' + userId : 'ip:' + ip;
 
-  const ban = ipBans.get(ip);
+  const ban = ipBans.get(key);
   if (ban && ban > t) return { ok: false, retry: Math.ceil((ban - t) / 1000) };
-  if (ban) ipBans.delete(ip);
+  if (ban) ipBans.delete(key);
 
-  let st = ipStats.get(ip);
-  if (!st || t - st.start > 60000) {
-    st = { start: t, all: 0, writes: 0, signups: (st && t - st.hourStart < 3600000) ? st.signups : 0,
-           hourStart: (st && t - st.hourStart < 3600000) ? st.hourStart : t };
-    ipStats.set(ip, st);
-  }
-  st.all++;
+  /* Счётчик адреса — общий, счётчик аккаунта — личный */
+  for (const k of userId ? [key] : ['ip:' + ip]) {
+    let st = ipStats.get(k);
+    if (!st || t - st.start > 60000) { st = { start: t, all: 0, writes: 0, auth: 0 }; ipStats.set(k, st); }
+    st.all++;
+    if (req.method === 'POST' && !/\/api\/(state|market|config|health)/.test(url)) st.writes++;
+    if (/\/api\/auth\//.test(url)) st.auth++;
 
-  const isWrite = req.method === 'POST' && !/\/api\/(state|market|config|health)/.test(url);
-  if (isWrite) st.writes++;
-  if (/\/api\/auth\/(request|verify)/.test(url) || /\/api\/profile\/setup/.test(url)) {
-    if (t - st.hourStart > 3600000) { st.hourStart = t; st.signups = 0; }
-    st.signups++;
-    if (st.signups > LIMITS.signupsPerHour) {
-      ipBans.set(ip, t + LIMITS.banMinutes * 60000);
-      return { ok: false, retry: LIMITS.banMinutes * 60, reason: 'Слишком много регистраций' };
+    const limAll = userId ? LIMITS.perMinuteUser : LIMITS.perMinuteIp;
+    if (st.all > limAll || (userId && st.writes > LIMITS.writesPerMinute)) {
+      ipBans.set(k, t + LIMITS.banMinutes * 60000);
+      console.warn('Флуд от ' + k + ': ' + st.all + ' запросов за минуту — пауза ' + LIMITS.banMinutes + ' мин');
+      return { ok: false, retry: LIMITS.banMinutes * 60, reason: 'Слишком много запросов' };
     }
-  }
-
-  if (st.all > LIMITS.perMinute || st.writes > LIMITS.writesPerMinute) {
-    ipBans.set(ip, t + LIMITS.banMinutes * 60000);
-    console.warn('Перегрузка с ' + ip + ': ' + st.all + ' запросов, ' + st.writes + ' записей за минуту — пауза');
-    return { ok: false, retry: LIMITS.banMinutes * 60, reason: 'Слишком много запросов' };
+    /* Коды входа: просто отклоняем лишние, без бана — иначе накажем целый район */
+    if (!userId && st.auth > LIMITS.authPerMinute) {
+      return { ok: false, retry: 60, reason: 'Слишком часто запрашиваете код' };
+    }
   }
   return { ok: true };
 }
@@ -3567,8 +3567,17 @@ const server = http.createServer(async (req, res) => {
 
   const url = req.url.split('?')[0];
 
-  /* Придерживаем тех, кто долбит сервер запросами */
-  const rl = rateCheck(req, url);
+  /* Придерживаем тех, кто долбит сервер запросами.
+     Авторизованных считаем по аккаунту, анонимов — по адресу. */
+  let rlUser = '';
+  try {
+    const auth = req.headers.authorization || '';
+    if (auth.startsWith('Bearer ')) {
+      const tk = auth.slice(7);
+      if (db.tokens && db.tokens[tk]) rlUser = db.tokens[tk];
+    }
+  } catch (e) {}
+  const rl = rateCheck(req, url, rlUser);
   if (!rl.ok) {
     res.writeHead(429, {
       'content-type': 'application/json; charset=utf-8',
