@@ -378,6 +378,7 @@ function chatView(c, userId) {
     peer,
     msgs: c.msgs.filter(m => m.time > ((c.clearedAt || {})[userId] || 0)).slice(-200).map(m => ({
       id: m.id, text: m.text, time: m.time,
+      req: m.deleted ? null : (m.req || null),
       enc: m.deleted ? null : (m.enc || null),
       iv: m.deleted ? null : (m.iv || null),
       media: m.deleted ? null : (m.media || null),
@@ -2458,11 +2459,9 @@ route('POST', '/api/chats/wallpaper', async (req, res, body, user) => {
 
   /* Для обоих — нужно согласие собеседника */
   chat.wpOffer = { from: user.id, wp, time: now() };
+  askInChat(chat, user.id, 'wp', { wp, name: user.name || '' });
   save();
-  if (pid) {
-    serviceMessage(pid, (user.name || 'Собеседник') + ' предлагает поставить общие обои в этом чате. Откройте меню чата, чтобы принять или отклонить.');
-    push(pid, { type: 'state' });
-  }
+  if (pid) push(pid, { type: 'state' });
   send(res, 200, { offered: true, chats: userChats(user.id) });
 });
 
@@ -2474,13 +2473,11 @@ route('POST', '/api/chats/wallpaper/answer', async (req, res, body, user) => {
   if (body.accept) {
     chat.wp = chat.wpOffer.wp;
     chat.wpFor = {};
-    if (who) {
-      serviceMessage(who.id, (user.name || 'Собеседник') + ' принял общие обои.');
-      push(who.id, { type: 'state' });
-    }
-  } else if (who) {
-    serviceMessage(who.id, (user.name || 'Собеседник') + ' отклонил смену обоев.');
-    push(who.id, { type: 'state' });
+    answerInChat(chat, 'wp', 'ok');
+    if (who) push(who.id, { type: 'state' });
+  } else {
+    answerInChat(chat, 'wp', 'no');
+    if (who) push(who.id, { type: 'state' });
   }
   chat.wpOffer = null;
   save();
@@ -2509,11 +2506,9 @@ route('POST', '/api/chats/secret', async (req, res, body, user) => {
      за шифрованием, чтобы на них нельзя было пожаловаться */
   if (chat.secret) return send(res, 200, { secret: true, chats: userChats(user.id) });
   chat.secretOffer = { from: user.id, time: now() };
+  askInChat(chat, user.id, 'secret', { name: user.name || '' });
   save();
-  if (pid) {
-    serviceMessage(pid, (user.name || 'Собеседник') + ' предлагает включить секретный чат. Сообщения будут шифроваться на устройствах, но пожаловаться на скам или докс в таком чате станет невозможно. Откройте меню чата, чтобы принять или отклонить.');
-    push(pid, { type: 'state' });
-  }
+  if (pid) push(pid, { type: 'state' });
   send(res, 200, { offered: true, chats: userChats(user.id) });
 });
 
@@ -2524,14 +2519,11 @@ route('POST', '/api/chats/secret/answer', async (req, res, body, user) => {
   const who = db.users[chat.secretOffer.from];
   if (body.accept) {
     chat.secret = true;
-    if (who) {
-      serviceMessage(who.id, (user.name || 'Собеседник') + ' согласился: секретный чат включён. Жалобы в этом чате недоступны обоим.');
-      push(who.id, { type: 'state' });
-    }
-    serviceMessage(user.id, 'Секретный чат включён. Сообщения шифруются на устройствах.');
-  } else if (who) {
-    serviceMessage(who.id, (user.name || 'Собеседник') + ' отклонил секретный чат.');
-    push(who.id, { type: 'state' });
+    answerInChat(chat, 'secret', 'ok');
+    if (who) push(who.id, { type: 'state' });
+  } else {
+    answerInChat(chat, 'secret', 'no');
+    if (who) push(who.id, { type: 'state' });
   }
   chat.secretOffer = null;
   save();
@@ -2972,6 +2964,35 @@ function notifyPush(userId) {
   if (isOnline(userId)) return;
   for (const sub of u.pushSubs) if (!sub.dead) pushWeb(sub, 3600);
   u.pushSubs = u.pushSubs.filter(x => !x.dead);
+}
+
+/* Запрос согласия прямо в переписке: обе стороны видят карточку с кнопками */
+function askInChat(chat, fromId, kind, extra) {
+  const msg = {
+    id: uid(), from: fromId, text: '', time: now(), deleted: false,
+    req: Object.assign({ kind, status: 'pending', from: fromId }, extra || {})
+  };
+  chat.msgs.push(msg);
+  save();
+  const payload = { id: msg.id, text: '', req: msg.req, time: msg.time, out: false };
+  for (const m of chat.members) {
+    if (m === fromId) continue;
+    push(m, { type: 'message', chatId: chat.id, message: payload });
+  }
+  return msg;
+}
+
+function answerInChat(chat, kind, status) {
+  for (let i = chat.msgs.length - 1; i >= 0; i--) {
+    const m = chat.msgs[i];
+    if (m.req && m.req.kind === kind && m.req.status === 'pending') {
+      m.req.status = status;
+      save();
+      for (const u of chat.members) push(u, { type: 'state' });
+      return m;
+    }
+  }
+  return null;
 }
 
 /* Биржа изменилась — короткий сигнал, не чаще раза в 5 секунд */
