@@ -102,7 +102,8 @@ let db = {
   deals: {},      // dealId -> сделка на бирже
   stories: [],    // истории на 24 часа
   botTokens: {},  // token -> botId
-  botUpdates: {}  // botId -> [входящие сообщения для бота]
+  botUpdates: {}, // botId -> [входящие сообщения для бота]
+  blacklist: {}   // ключ 'mail:...' / 'phone:...' / 'ip:...' -> { time, by }
 };
 
 /* Постоянное хранилище.
@@ -169,6 +170,7 @@ function ensureDbShape() {
   db.stories = db.stories || [];
   db.botTokens = db.botTokens || {};
   db.botUpdates = db.botUpdates || {};
+  db.blacklist = db.blacklist || {};
 }
 
 let saveTimer = null;
@@ -258,6 +260,39 @@ function normPhone(p) {
 function normUsername(u) {
   return String(u || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
 }
+/* ===== БЕЗОПАСНОСТЬ МЕДИА =====
+   Раньше проверялось только начало строки: 'data:image/png;base64,'.
+   Хвост после запятой не смотрели, и туда можно было дописать кавычку
+   с куском разметки. В браузере такая строка подставлялась в атрибут
+   и вырывалась наружу — отсюда чужие диалоги поверх приложения.
+   Теперь строка разбирается на части и собирается заново из проверенного. */
+const MIME_GROUPS = {
+  image: /^image\/(jpeg|png|webp|gif)$/,
+  audio: /^audio\/[a-z0-9.+-]{1,40}$/,
+  video: /^video\/[a-z0-9.+-]{1,40}$/,
+  any:   /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,60}$/
+};
+function sanitizeDataUrl(raw, group, maxLen) {
+  const str = String(raw || '');
+  if (!str || (maxLen && str.length > maxLen)) return null;
+  if (!str.startsWith('data:')) return null;
+  /* Граница — именно ';base64,'. Запятая внутри codecs=vp8,opus не считается */
+  const idx = str.toLowerCase().indexOf(';base64,');
+  if (idx < 6 || idx > 220) return null;
+  const tail = str.slice(idx + 8);
+  /* Настоящий base64 и ничего кроме него */
+  if (!/^[A-Za-z0-9+/]{8,}={0,2}$/.test(tail)) return null;
+  const parts = str.slice(5, idx).split(';');
+  const mime = String(parts.shift() || '').toLowerCase();
+  const re = MIME_GROUPS[group];
+  if (!re || !re.test(mime)) return null;
+  let codecs = '';
+  for (const p of parts) {
+    const m = /^codecs=(.+)$/i.exec(p);
+    if (m) codecs = ';codecs=' + m[1].replace(/[^a-zA-Z0-9,.\- ]/g, '').slice(0, 60);
+  }
+  return 'data:' + mime + codecs + ';base64,' + tail;
+}
 function isOnline(userId) {
   const set = sockets.get(userId);
   if (!set) return false;
@@ -292,7 +327,65 @@ function publicUser(u) {
 }
 function userByToken(token) {
   const id = db.tokens[token];
-  return id ? db.users[id] : null;
+  const u = id ? db.users[id] : null;
+  /* Забаненный не должен проходить дальше ни по одному пути */
+  return (u && u.banned) ? null : u;
+}
+
+/* ===== БАН =====
+   Раньше бан только ставил флаг. Токен продолжал работать до перезахода,
+   веб-сокет оставался открытым, а новый аккаунт на ту же почту открывался
+   свободно. Теперь бан рвёт сессии и запоминает почту, телефон и адрес. */
+function blacklistKeys(u) {
+  const keys = [];
+  if (!u) return keys;
+  if (u.email) keys.push('mail:' + String(u.email).toLowerCase());
+  if (u.phone) keys.push('phone:' + u.phone);
+  for (const ip of (u.ips || [])) keys.push('ip:' + ip);
+  return keys;
+}
+function dropSessions(userId) {
+  let n = 0;
+  for (const [t, id] of Object.entries(db.tokens)) {
+    if (id === userId) { delete db.tokens[t]; n++; }
+  }
+  const set = sockets.get(userId);
+  if (set) {
+    for (const ws of set) { try { ws.close(4003, 'banned'); } catch (e) {} }
+    sockets.delete(userId);
+  }
+  return n;
+}
+function applyBan(target, by) {
+  target.banned = true;
+  target.bannedAt = now();
+  db.blacklist = db.blacklist || {};
+  for (const k of blacklistKeys(target)) db.blacklist[k] = { time: now(), by: by || '', user: target.id };
+  /* Заодно снимаем с продажи лоты и гасим оформление, чтобы аккаунт нигде не светился */
+  for (const v of Object.values(db.usernames)) if (v.owner === target.id) v.forSale = false;
+  target.photo = null;
+  target.coverImg = null;
+  return dropSessions(target.id);
+}
+function liftBan(target) {
+  target.banned = false;
+  db.blacklist = db.blacklist || {};
+  for (const k of blacklistKeys(target)) delete db.blacklist[k];
+}
+function isBlacklisted(keys) {
+  db.blacklist = db.blacklist || {};
+  for (const k of keys) if (db.blacklist[k]) return true;
+  return false;
+}
+function rememberIp(user, req) {
+  try {
+    const ip = String((req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket.remoteAddress || '').trim();
+    if (!ip) return;
+    user.ips = user.ips || [];
+    if (!user.ips.includes(ip)) user.ips.unshift(ip);
+    if (user.ips.length > 5) user.ips.length = 5;
+    if (user.banned) { db.blacklist = db.blacklist || {}; db.blacklist['ip:' + ip] = { time: now(), user: user.id }; }
+  } catch (e) {}
 }
 /* Серверы для звонков. STUN подсказывает адрес, TURN пропускает звук
    через себя, когда прямое соединение не проходит — VPN, мобильный NAT. */
@@ -1317,7 +1410,11 @@ route('POST', '/api/auth/email/verify', async (req, res, body) => {
   }
   delete db.codes[key];
 
+  if (isBlacklisted(['mail:' + String(email).toLowerCase()])) {
+    return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
+  }
   let user = Object.values(db.users).find(u => u.email === email);
+  if (user && user.banned) return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
   const token = crypto.randomBytes(24).toString('hex');
   if (user) {
     const mine = Object.entries(db.tokens).filter(([, id]) => id === user.id);
@@ -1393,7 +1490,11 @@ route('POST', '/api/auth/verify', async (req, res, body) => {
 
   delete db.codes[phone];
 
+  if (isBlacklisted(['phone:' + phone])) {
+    return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
+  }
   let user = Object.values(db.users).find(u => u.phone === phone);
+  if (user && user.banned) return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
   const token = crypto.randomBytes(24).toString('hex');
   if (user) {
     /* Старые сессии сверх пяти умирают — украденный давний токен бесполезен */
@@ -1469,10 +1570,10 @@ route('POST', '/api/profile/update', async (req, res, body, user) => {
   if (typeof body.photo === 'string') {
     /* Аватарка: маленький jpeg в base64, клиент сжимает сам */
     if (body.photo === '') user.photo = null;
-    else if (/^data:image\/(jpeg|png|webp);base64,/.test(body.photo) && body.photo.length < 200000) {
-      user.photo = body.photo;
-    } else {
-      return send(res, 400, { error: 'Фото слишком большое' });
+    else {
+      const clean = sanitizeDataUrl(body.photo, 'image', 200000);
+      if (!clean) return send(res, 400, { error: 'Фото не подходит или слишком большое' });
+      user.photo = clean;
     }
   }
   save();
@@ -1515,28 +1616,27 @@ route('POST', '/api/chats/create', async (req, res, body, user) => {
 
 function validMedia(media) {
   if (!media || typeof media !== 'object') return null;
-  const data = String(media.data || '');
+  const raw = String(media.data || '');
+  const dur = () => Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1)));
+
   if (media.kind === 'photo') {
-    if (!/^data:image\/(jpeg|png|webp);base64,/.test(data) || data.length > 700000) return null;
-    return { kind: 'photo', data };
+    const data = sanitizeDataUrl(raw, 'image', 700000);
+    return data ? { kind: 'photo', data } : null;
   }
   if (media.kind === 'voice') {
-    if (!/^data:audio\/(webm|ogg|mp4|mpeg|wav)(;codecs=[a-z0-9]+)?;base64,/.test(data) || data.length > 3000000) return null;
-    return { kind: 'voice', data, dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1))) };
+    const data = sanitizeDataUrl(raw, 'audio', 3000000);
+    return data ? { kind: 'voice', data, dur: dur() } : null;
   }
   if (media.kind === 'video' || media.kind === 'circle') {
-    if (!/^data:video\/[a-z0-9.+-]+(;codecs=[a-z0-9,.\s"']+)?;base64,/i.test(data)) return null;
-    if (data.length > MAX_BYTES) return null;
-    return {
-      kind: media.kind, data,
-      dur: Math.min(300, Math.max(1, Math.round(Number(media.dur) || 1)))
-    };
+    const data = sanitizeDataUrl(raw, 'video', MAX_BYTES);
+    return data ? { kind: media.kind, data, dur: dur() } : null;
   }
   if (media.kind === 'file') {
     /* Любой файл: архив, документ, что угодно */
-    if (!/^data:[a-z0-9.+\/-]*;base64,/i.test(data)) return null;
-    if (data.length > MAX_BYTES) return null;
-    const name = String(media.name || 'файл').replace(/[\r\n]/g, '').slice(0, 80);
+    const data = sanitizeDataUrl(raw, 'any', MAX_BYTES);
+    if (!data) return null;
+    /* Имя файла показывается в переписке — вычищаем кавычки и угловые скобки */
+    const name = String(media.name || 'файл').replace(/[\r\n<>"'`\\]/g, '').slice(0, 80) || 'файл';
     return { kind: 'file', data, name, size: Math.round(data.length * 0.75) };
   }
   return null;
@@ -2293,6 +2393,24 @@ route('POST', '/api/dev/report-data', async (req, res, body, user) => {
   });
 });
 
+route('POST', '/api/dev/purge-xss', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const bad = purgeUnsafeMedia();
+  send(res, 200, { purged: bad });
+});
+
+route('POST', '/api/dev/blacklist', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  db.blacklist = db.blacklist || {};
+  if (body.remove) { delete db.blacklist[String(body.remove)]; save(); }
+  send(res, 200, {
+    banned: Object.values(db.users).filter(u => u.banned).map(u => ({
+      id: u.id, username: u.username, name: u.name, at: u.bannedAt || 0
+    })),
+    blacklist: Object.entries(db.blacklist).map(([k, v]) => ({ key: k, time: v.time, user: v.user }))
+  });
+});
+
 route('POST', '/api/dev/broadcast', async (req, res, body, user) => {
   if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
   const text = String(body.text || '').trim().slice(0, 1000);
@@ -2337,8 +2455,11 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
       }
     });
   }
-  if (body.ban === true) { target.banned = true; done.push('аккаунт заблокирован'); }
-  if (body.ban === false) { target.banned = false; done.push('аккаунт разблокирован'); }
+  if (body.ban === true) {
+    const killed = applyBan(target, user.username || user.id);
+    done.push('аккаунт заблокирован, сессий сброшено: ' + killed);
+  }
+  if (body.ban === false) { liftBan(target); done.push('аккаунт разблокирован'); }
   if (body.clearPremium) { target.premiumUntil = 0; done.push('премиум снят'); }
   if (body.resetPhoto) { target.photo = null; done.push('аватар сброшен'); }
   if (body.verified === true) { target.verified = true; done.push('галочка выдана'); }
@@ -2354,8 +2475,10 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
     done.push('доверие ' + target.trust + '%');
   }
   save();
-  serviceMessage(target.id, 'Обновление аккаунта от команды Newchat: ' + (done.join(', ') || 'без изменений') + '.');
-  push(target.id, { type: 'state' });
+  if (!target.banned) {
+    serviceMessage(target.id, 'Обновление аккаунта от команды Newchat: ' + (done.join(', ') || 'без изменений') + '.');
+    push(target.id, { type: 'state' });
+  }
   send(res, 200, { done, target: publicUser(target) });
 });
 
@@ -2363,12 +2486,13 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
 
 route('POST', '/api/stories/post', async (req, res, body, user) => {
   if (!isPremium(user)) return send(res, 403, { error: 'Сторисы — функция премиума. Пригласите ' + PREMIUM.invites + ' друзей!' });
-  const photo = String(body.photo || '');
-  const isVideo = /^data:video\//i.test(photo);
-  if (isVideo) {
-    if (photo.length > MAX_BYTES) return send(res, 400, { error: 'Видео больше ' + MAX_MB + ' МБ' });
-  } else if (!/^data:image\/(jpeg|png|webp);base64,/.test(photo) || photo.length > 900000) {
-    return send(res, 400, { error: 'Фото не подходит' });
+  const rawPhoto = String(body.photo || '');
+  const isVideo = /^data:video\//i.test(rawPhoto);
+  const photo = isVideo
+    ? sanitizeDataUrl(rawPhoto, 'video', MAX_BYTES)
+    : sanitizeDataUrl(rawPhoto, 'image', 900000);
+  if (!photo) {
+    return send(res, 400, { error: isVideo ? ('Видео не подходит или больше ' + MAX_MB + ' МБ') : 'Фото не подходит' });
   }
   const mine = db.stories.filter(st => st.user === user.id && now() - st.time < 86400e3);
   if (mine.length >= 10) return send(res, 400, { error: 'Не больше 10 историй в сутки' });
@@ -3295,9 +3419,9 @@ route('POST', '/api/profile/style', async (req, res, body, user) => {
     if (!m) { user.music = null; }
     else {
       const data = String(m.data || '');
-      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
-      if (data.length > MUSIC_MB * 1.37 * 1024 * 1024) return send(res, 400, { error: 'Трек больше ' + MUSIC_MB + ' МБ' });
-      user.music = { data, name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60), size: Math.round(data.length * 0.75) };
+      const cleanAudio = sanitizeDataUrl(data, 'audio', Math.round(MUSIC_MB * 1.37 * 1024 * 1024));
+      if (!cleanAudio) return send(res, 400, { error: 'Нужен музыкальный файл до ' + MUSIC_MB + ' МБ' });
+      user.music = { data: cleanAudio, name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60), size: Math.round(data.length * 0.75) };
     }
   }
   if (body.coverImg !== undefined) {
@@ -3305,10 +3429,9 @@ route('POST', '/api/profile/style', async (req, res, body, user) => {
     if (!img) { user.coverImg = null; }
     else {
       if (!isPremium(user)) return send(res, 403, { error: 'Своя обложка доступна с премиумом' });
-      if (!/^data:image\/(jpeg|png|webp);base64,/.test(img) || img.length > 900000) {
-        return send(res, 400, { error: 'Картинка не подходит: до 600 КБ' });
-      }
-      user.coverImg = img;
+      const cleanCover = sanitizeDataUrl(img, 'image', 900000);
+      if (!cleanCover) return send(res, 400, { error: 'Картинка не подходит: до 600 КБ' });
+      user.coverImg = cleanCover;
     }
   }
   if (body.cover !== undefined) {
@@ -3630,9 +3753,16 @@ const server = http.createServer(async (req, res) => {
   let user = null;
   if (!OPEN_ROUTES.includes(key)) {
     const token = (req.headers.authorization || '').replace('Bearer ', '');
+    const rawId = db.tokens[token];
+    const raw = rawId ? db.users[rawId] : null;
+    if (raw && raw.banned) {
+      dropSessions(raw.id);
+      save();
+      return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
+    }
     user = userByToken(token);
     if (!user) return send(res, 401, { error: 'Требуется вход' });
-    if (user.banned) return send(res, 403, { error: 'Аккаунт заблокирован модерацией Newchat' });
+    rememberIp(user, req);
     user.lastSeen = now(); /* «был в сети» обновляется любым запросом */
   }
 
@@ -3650,7 +3780,9 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws, req) => {
   const token = new URL(req.url, 'http://x').searchParams.get('token');
   const user = userByToken(token);
-  if (!user) return ws.close();
+  /* Без этой проверки забаненный держал открытый сокет и продолжал работать */
+  if (!user || user.banned) return ws.close(4003, 'banned');
+  rememberIp(user, req);
 
   if (!sockets.has(user.id)) sockets.set(user.id, new Set());
   sockets.get(user.id).add(ws);
@@ -3658,6 +3790,7 @@ wss.on('connection', (ws, req) => {
   /* Сигналинг звонков: клиенты обмениваются WebRTC-пакетами через нас.
      Сами звонки идут напрямую между телефонами, сервер видит только «конверты». */
   ws.on('message', raw => {
+    if (user.banned) { try { ws.close(4003, 'banned'); } catch (e) {} return; }
     let d;
     try { d = JSON.parse(String(raw).slice(0, 200000)); } catch (e) { return; }
 
@@ -3705,7 +3838,58 @@ setInterval(() => {
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.ping(); });
 }, 30000);
 
+/* ===== ЧИСТКА ЗАРАЖЁННЫХ ЗАПИСЕЙ =====
+   Всё, что успели загрузить через старую дырявую проверку, лежит в базе
+   и срабатывает при каждой отрисовке. Прогоняем хранилище через новый
+   санитайзер и вырезаем то, что его не проходит. */
+function purgeUnsafeMedia() {
+  const bad = { photo: 0, cover: 0, music: 0, story: 0, msg: 0, name: 0 };
+
+  for (const u of Object.values(db.users || {})) {
+    if (u.photo && !sanitizeDataUrl(u.photo, 'image', 400000)) { u.photo = null; bad.photo++; }
+    if (u.coverImg && !sanitizeDataUrl(u.coverImg, 'image', 1200000)) { u.coverImg = null; bad.cover++; }
+    if (u.music && u.music.data && !sanitizeDataUrl(u.music.data, 'audio', 30000000)) { u.music = null; bad.music++; }
+    /* Имя, юзернейм, статус и описание тоже попадают в вёрстку */
+    for (const f of ['name', 'status', 'bio']) {
+      if (typeof u[f] === 'string' && /[<>"'`\\]/.test(u[f])) {
+        u[f] = u[f].replace(/[<>"'`\\]/g, '');
+        bad.name++;
+      }
+    }
+  }
+
+  db.stories = (db.stories || []).filter(st => {
+    const ok = sanitizeDataUrl(st.photo, st.video ? 'video' : 'image', 60000000);
+    if (!ok) bad.story++;
+    return !!ok;
+  });
+
+  for (const c of Object.values(db.chats || {})) {
+    for (const m of c.msgs || []) {
+      if (!m.media || !m.media.data) continue;
+      const group = m.media.kind === 'photo' ? 'image'
+        : m.media.kind === 'voice' ? 'audio'
+        : (m.media.kind === 'video' || m.media.kind === 'circle') ? 'video' : 'any';
+      if (!sanitizeDataUrl(m.media.data, group, 60000000)) {
+        m.media = null;
+        m.text = '⚠️ вложение удалено службой безопасности';
+        bad.msg++;
+      } else if (m.media.name) {
+        m.media.name = String(m.media.name).replace(/[<>"'`\\]/g, '');
+      }
+    }
+  }
+
+  const total = Object.values(bad).reduce((a, b) => a + b, 0);
+  if (total) {
+    console.warn('Чистка: удалено опасных записей — ' + JSON.stringify(bad));
+    save();
+  }
+  return bad;
+}
+
 load().then(() => {
+  purgeUnsafeMedia();
   server.listen(PORT, () => {
     console.log('Newchat-сервер запущен на порту ' + PORT);
   const ways = [];
