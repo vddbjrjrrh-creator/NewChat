@@ -3091,6 +3091,33 @@ route('POST', '/api/quests', async (req, res, body, user) => {
   });
 });
 
+route('POST', '/api/dev/gift-take', async (req, res, body, user) => {
+  /* Забрать карточку у человека */
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const uname = normUsername(body.username);
+  const rec = db.usernames[uname];
+  const target = rec && db.users[rec.owner];
+  if (!target) return send(res, 404, { error: 'Пользователь не найден' });
+
+  db.gifts = db.gifts || [];
+  const type = String(body.type || '').trim().toLowerCase();
+  const own = db.gifts.filter(g => g.owner === target.id && (!type || g.type === type));
+  if (!own.length) return send(res, 404, { error: type ? ('У @' + uname + ' нет карточки «' + type + '»') : ('У @' + uname + ' нет карточек') });
+
+  const taken = [];
+  for (const g of own) {
+    if (g.frozen) { taken.push('«' + g.type + '» в сделке — пропущена'); continue; }
+    const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+    db.gifts = db.gifts.filter(x => x.id !== g.id);
+    taken.push((t.name || g.type) + ' №' + g.num);
+  }
+  save();
+  serviceMessage(target.id, 'Команда Newchat изъяла у вас карточку: ' + taken.join(', ') + '.' +
+    (body.reason ? '\n\nПричина: ' + String(body.reason).slice(0, 200) : ''));
+  push(target.id, { type: 'state' });
+  send(res, 200, { done: ['изъято у @' + uname + ': ' + taken.join(', ')] });
+});
+
 route('POST', '/api/gifts/list', async (req, res, body, user) => {
   grantDevCoin(user);
   send(res, 200, { gifts: myGifts(user.id) });

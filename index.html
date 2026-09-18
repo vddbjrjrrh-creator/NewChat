@@ -1670,6 +1670,7 @@ body{
         <button class="cur-btn" style="font-family:'Manrope';font-size:.78rem" onclick="gcRar('Легендарная',5)">Легендарная</button>
       </div>
       <button class="btn ghost" onclick="devGiftCard()" style="margin-top:8px">Выдать карточку</button>
+      <button class="btn ghost" onclick="devGiftTake()" style="color:var(--danger)">Забрать карточку</button>
       <button class="btn ghost" onclick="devGiftTypes()">Какие карточки уже есть</button>
 
       <div class="w-section" style="margin-top:14px">Рассылка всем пользователям</div>
@@ -1787,7 +1788,7 @@ const tokenStore={
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 44;
+const APP_VERSION = 48;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2080,7 +2081,7 @@ async function authNext(){
   try{
     const r=await api('/api/auth/request',{phone:p});
     document.getElementById('code-phone').textContent=
-      '+7 '+p.slice(0,3)+' '+p.slice(3,6)+'-'+p.slice(6,8)+'-'+p.slice(8,10);
+      (String(p).startsWith('+') ? p : '+7 '+p.slice(0,3)+' '+p.slice(3,6)+'-'+p.slice(6,8)+'-'+p.slice(8,10));
     show('s-code');
     document.getElementById('auth-code').value='';
     if(r.devCode){
@@ -3154,6 +3155,16 @@ async function devGiftCard(){
     const r=await api('/api/dev/gift-card',{username,type,name,rarity:gcRarity.rarity,rarityNum:gcRarity.rarityNum});
     toast(r.done.join(', '));
     burst('star',innerWidth/2,innerHeight/2);
+  }catch(e){}
+}
+async function devGiftTake(){
+  const username=document.getElementById('adm-uname').value.trim().replace(/^@/,'');
+  const type=document.getElementById('gc-type').value.trim();
+  if(!username){toast('Введите юзернейм в поле сверху');return}
+  if(!confirm('Забрать у @'+username+(type?' карточку «'+type+'»':' ВСЕ карточки')+'?'))return;
+  try{
+    const r=await api('/api/dev/gift-take',{username,type});
+    toast(r.done.join(', '));
   }catch(e){}
 }
 async function devGiftTypes(){
@@ -4682,6 +4693,12 @@ function celebrateAegis(){
 
 /* ===== ВИТРИНА КОЛЛЕКЦИИ ===== */
 const SHIELD_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg>';
+/* Иконка карточки: щит Aegis объёмный и без круга, монета — в круге */
+function giftIcon(type,size){
+  const st=size?(' style="width:'+size+'px;height:'+size+'px;margin:0 10px 0 0"'):'';
+  if(type==='aegis')return '<div class="nft-mini shield"'+st+'>'+SHIELD_3D+'</div>';
+  return '<div class="nft-mini"'+st+'>'+SHIELD_SVG+'</div>';
+}
 function peerMusicBlock(p){
   if(!p.music)return '';
   peerMusic={owner:p.id,music:p.music};
@@ -4809,7 +4826,7 @@ function renderShelf(){
   box.style.padding='14px 12px';
   box.innerHTML='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">'+
     items.map((g,i)=>'<div class="nft-card" onclick="openGift('+i+')">'+
-      '<div class="nft-mini"'+(g.type==='aegis'?' style="background:radial-gradient(circle at 34% 28%,#EFEAFF,#B7A9EE 55%,#7A68D8 100%)"':'')+'>'+SHIELD_SVG+'</div>'+
+      giftIcon(g.type)+
       '<b style="font-size:.86rem;display:block">'+esc(g.name||'')+'</b>'+
       '<span style="font-size:.68rem;color:var(--ink-2)">#'+g.num+' из '+g.total+'</span>'+
       '<div style="margin-top:4px">'+Array.from({length:g.rarityNum||1},()=>'<span class="rar-dot"></span>').join('')+'</div>'+
@@ -5394,7 +5411,7 @@ function renderCardMarket(){
     html+='<div class="w-section">Мои карточки</div>'+
       onSale.concat(mine).map(g=>
         '<div class="uname-card glass-card" style="align-items:center">'+
-        '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'+
+        giftIcon(x.type,44)+
         '<div class="u" style="flex:1"><div class="h" style="font-size:.92rem">'+esc(g.name)+'</div>'+
         '<div class="sub">№'+g.num+' из '+g.total+' · '+esc(g.rarity)+'</div></div>'+
         (g.forSale
@@ -5412,7 +5429,7 @@ function renderCardMarket(){
   }else{
     html+=others.map(l=>
       '<div class="uname-card glass-card" style="align-items:center" onclick="buyCard(\''+l.id+'\',\''+esc(l.name)+'\','+l.price+')">'+
-      '<div class="nft-mini" style="width:46px;height:46px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'+
+      giftIcon(it.raw.type,46)+
       '<div class="u" style="flex:1"><div class="h" style="font-size:.92rem">'+esc(l.name)+' №'+l.num+'</div>'+
       '<div class="sub">'+esc(l.rarity)+' · из '+l.total+' шт.'+
         (l.lastPrice?' · прошлая продажа '+l.lastPrice.toLocaleString('ru')+' ₽':' · продаётся впервые')+'</div>'+
@@ -5638,7 +5655,7 @@ function renderMyCards(){
 }
 function cardRow(g){
   return '<div class="uname-card glass-card" style="align-items:center">'+
-    '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'+
+    giftIcon(g.type,44)+
     '<div class="u" style="flex:1"><div class="h" style="font-size:.92rem">'+esc(g.name)+'</div>'+
     '<div class="sub">№'+g.num+' из '+g.total+' · '+esc(g.rarity)+
       (g.lastPrice?' · рынок '+g.lastPrice.toLocaleString('ru')+' ₽':'')+'</div></div>'+
@@ -5698,7 +5715,7 @@ function renderCatalog(){
         ? 'openBuy(\''+it.raw.u+'\')'
         : 'buyCard(\''+it.raw.id+'\',\''+esc(it.raw.name)+'\','+it.price+')')+'">'+
     (it.kind==='card'
-      ? '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0">'+SHIELD_SVG+'</div>'
+      ? giftIcon(it.raw&&it.raw.type,44)
       : '<div class="nft-mini" style="width:44px;height:44px;margin:0 10px 0 0;background:linear-gradient(135deg,#9BA0AD,#6E7280)">'+
         '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" width="22" height="22"><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/></svg></div>')+
     '<div class="u" style="flex:1"><div class="h mono" style="font-size:.92rem">'+esc(it.name)+'</div>'+
@@ -5724,7 +5741,9 @@ function renderProfile(){
   else{pa.style.background=AVAS[u.ava||0];document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();}
   document.getElementById('p-status').textContent=u.status||'';
   document.getElementById('p-name').innerHTML=esc(u.name)+devChip(u);
-  const ph=u.phone?('+7 '+u.phone.slice(0,3)+' •••-••-'+u.phone.slice(-2)):'';
+  const ph=u.phone
+    ? (String(u.phone).startsWith('+') ? u.phone : ('+7 '+u.phone.slice(0,3)+' •••-••-'+u.phone.slice(-2)))
+    : '';
   document.getElementById('p-handle').textContent='@'+u.username+' · '+ph;
   document.getElementById('p-vcheck').style.display=u.verified?'inline-flex':'none';
   document.getElementById('p-devtag').style.display=u.dev?'block':'none';
