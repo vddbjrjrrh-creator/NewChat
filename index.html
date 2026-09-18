@@ -907,6 +907,11 @@ body{
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       Поиск людей, каналов и ботов
     </div>
+    <div class="quest-bar" id="quest-bar" style="display:none" onclick="openQuests()">
+      <span class="quest-ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg></span>
+      <span style="flex:1;min-width:0"><b id="qb-title">Получите карточку Aegis</b><span id="qb-sub">три задания · осталось 50</span></span>
+      <span class="quest-time" id="qb-time">60:00</span>
+    </div>
     <div class="scroll" id="chat-list"></div>
     <button class="fab" onclick="openSheet('sheet-newchat')" title="Новый чат">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
@@ -1550,6 +1555,11 @@ body{
       <button class="btn" onclick="submitVerify()">Отправить заявку</button>
     </div>
 
+    <div class="sheet" id="sheet-quests">
+      <div class="grip"></div>
+      <div id="quests-body"></div>
+    </div>
+
     <div class="sheet" id="sheet-gift">
       <div class="grip"></div>
       <div id="gift-body"></div>
@@ -2002,7 +2012,7 @@ function go(id){
   updateChatty();
   if(id==='s-settings'){const e=document.getElementById('s-ver');if(e)e.textContent=APP_VERSION}
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===id));
-  if(id==='s-chats')renderChats();
+  if(id==='s-chats'){renderChats();loadQuests()}
   if(id==='s-wallet')renderWallet();
   if(id==='s-market')renderMarket();
   if(id==='s-profile')renderProfile();
@@ -4520,6 +4530,131 @@ async function askHelp(preset){
   }
   renderHelp();
 }
+/* ===== ЗАДАНИЯ НА КАРТОЧКУ ===== */
+const SHIELD_3D='<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">'+
+  '<defs>'+
+    '<linearGradient id="shEdge" x1="0" y1="0" x2="1" y2="1">'+
+      '<stop offset="0%" stop-color="#FFFFFF"/><stop offset="45%" stop-color="#F0ECFF"/>'+
+      '<stop offset="100%" stop-color="#C9BEF5"/></linearGradient>'+
+    '<linearGradient id="shSide" x1="0" y1="0" x2="0" y2="1">'+
+      '<stop offset="0%" stop-color="#B7A9EE"/><stop offset="100%" stop-color="#8674DC"/></linearGradient>'+
+  '</defs>'+
+  '<path d="M60 16l30 11.5v20C90 67 77 80.5 60 87 43 80.5 30 67 30 47.5v-20L60 16z" '+
+    'fill="none" stroke="url(#shSide)" stroke-width="13" stroke-linejoin="round" transform="translate(2,4)"/>'+
+  '<path d="M60 16l30 11.5v20C90 67 77 80.5 60 87 43 80.5 30 67 30 47.5v-20L60 16z" '+
+    'fill="none" stroke="url(#shEdge)" stroke-width="11" stroke-linejoin="round"/>'+
+  '<path d="M60 22l24 9v17c0 15.5-10 26.5-24 32-14-5.5-24-16.5-24-32V31l24-9z" '+
+    'fill="none" stroke="#fff" stroke-width="2" opacity=".35"/>'+
+  '</svg>';
+
+let questData=null,questTimer=null;
+function fmtLeft(ms){
+  const t=Math.max(0,Math.floor(ms/1000));
+  return String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
+}
+async function loadQuests(start){
+  if(!S||!token)return;
+  try{
+    const r=await api('/api/quests',start?{start:1}:{});
+    questData=r;
+    updateQuestBar();
+    if(r.justGot)celebrateAegis();
+    return r;
+  }catch(e){}
+}
+function updateQuestBar(){
+  const bar=document.getElementById('quest-bar');
+  if(!bar||!questData)return;
+  const a=document.querySelector('.screen.active');
+  const onChats=a&&a.id==='s-chats';
+  const hide=questData.have||questData.soldOut||questData.expired||!onChats;
+  bar.style.display=hide?'none':'flex';
+  if(hide)return;
+  const done=questData.quests.filter(q=>q.done).length;
+  document.getElementById('qb-title').textContent='Получите карточку «'+questData.name+'»';
+  document.getElementById('qb-sub').textContent=questData.started
+    ? done+' из '+questData.quests.length+' заданий · осталось '+(questData.total-questData.minted)+' из '+questData.total
+    : 'три задания · свободно '+(questData.total-questData.minted)+' из '+questData.total;
+  const tEl=document.getElementById('qb-time');
+  tEl.textContent=questData.started?fmtLeft(questData.msLeft):'начать';
+  clearInterval(questTimer);
+  if(questData.started&&questData.msLeft>0){
+    questTimer=setInterval(()=>{
+      questData.msLeft-=1000;
+      if(questData.msLeft<=0){clearInterval(questTimer);loadQuests();return}
+      const e=document.getElementById('qb-time');
+      if(e)e.textContent=fmtLeft(questData.msLeft);
+    },1000);
+  }
+}
+async function openQuests(){
+  const r=await loadQuests(false);
+  if(!r)return;
+  renderQuestSheet(r);
+  openSheet('sheet-quests');
+}
+async function startQuests(){
+  const r=await loadQuests(true);
+  if(!r)return;
+  renderQuestSheet(r);
+  toast('Час пошёл — успейте выполнить три задания');
+  burst('star',innerWidth/2,innerHeight/2);
+}
+function renderQuestSheet(r){
+  const body=document.getElementById('quests-body');
+  if(!body)return;
+  const done=r.quests.filter(q=>q.done).length;
+  body.innerHTML=
+    '<div class="shield-wrap"><div class="shield3d spin" id="q-shield">'+SHIELD_3D+'</div></div>'+
+    '<div style="text-align:center;margin-top:10px">'+
+      '<b style="font-size:1.25rem">'+esc(r.name)+'</b>'+
+      '<div style="font-size:.8rem;color:var(--ink-2);margin-top:2px">'+esc(r.rarity)+
+      ' · осталось '+(r.total-r.minted)+' из '+r.total+'</div></div>'+
+    '<div class="conv-preview" style="text-align:left;margin:12px 0">'+esc(r.desc)+'</div>'+
+    (r.started
+      ? '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'+
+        '<span class="pulse-dot" style="background:var(--danger)"></span>'+
+        '<b style="font-size:.86rem">Осталось времени: <span id="q-timer">'+fmtLeft(r.msLeft)+'</span></b>'+
+        '<span style="margin-left:auto;font-size:.8rem;color:var(--ink-2)">'+done+' из '+r.quests.length+'</span>'+
+        '</div>'
+      : '<div class="law-note" style="margin-bottom:10px">'+
+        '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>'+
+        'Час начнётся только после нажатия кнопки. Пока не нажали — время не идёт, можно начать когда удобно.'+
+        '</div>')+
+    r.quests.map(q=>
+      '<div class="report-opt'+(q.done?' on':'')+'" style="cursor:default">'+
+      '<span class="ic">'+(q.done
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="var(--trust)" stroke-width="2.6" width="20" height="20"><path d="M5 13l4 4 10-10"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="9"/></svg>')+'</span>'+
+      '<span><b>'+esc(q.title)+'</b><span>'+esc(q.hint)+'</span></span>'+
+      (q.done?'<span class="state">готово</span>':'')+'</div>').join('')+
+    (r.have?'<div class="law-note" style="margin-top:10px">Карточка уже ваша — смотрите в профиле.</div>':'')+
+    (r.expired?'<div class="law-note" style="margin-top:10px;color:var(--danger);border-color:var(--danger-soft)">Час вышел — карточка в этот раз не досталась. Следите за новыми.</div>':'')+
+    (!r.have&&!r.expired&&!r.started
+      ? '<button class="btn" style="margin-top:12px" onclick="startQuests()">Начать выполнять · 1 час</button>'
+      : '')+
+    '<button class="btn ghost" style="margin-top:'+(r.started?'12px':'8px')+'" onclick="closeSheets()">Закрыть</button>';
+
+  clearInterval(questTimer);
+  if(r.started&&!r.have&&r.msLeft>0){
+    questTimer=setInterval(()=>{
+      r.msLeft-=1000;
+      const e=document.getElementById('q-timer');
+      if(e)e.textContent=fmtLeft(r.msLeft);
+      const b=document.getElementById('qb-time');
+      if(b)b.textContent=fmtLeft(r.msLeft);
+      if(r.msLeft<=0){clearInterval(questTimer);loadQuests()}
+    },1000);
+  }
+}
+function celebrateAegis(){
+  closeSheets();
+  burst('star',innerWidth/2,innerHeight/2);
+  setTimeout(()=>burst('deal',innerWidth/2,innerHeight/2-40),250);
+  toast('Щит «Aegis» ваш! Он в профиле.');
+  syncAll();
+}
+
 /* ===== ВИТРИНА КОЛЛЕКЦИИ ===== */
 const SHIELD_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg>';
 function peerMusicBlock(p){
@@ -4560,6 +4695,7 @@ function openGift(i){
   showGiftCard(Object.assign({},g,{mineCard:true}));
 }
 function showGiftCard(g){
+  const isShield=g.type==='aegis';
   const price=g.lastPrice
     ? ('<b style="font-size:1.1rem;color:var(--gold)">'+g.lastPrice.toLocaleString('ru')+' ₽</b>'+
        '<div style="font-size:.7rem;color:var(--ink-2)">последняя продажа '+new Date(g.lastSaleAt).toLocaleDateString('ru')+
@@ -4568,13 +4704,17 @@ function showGiftCard(g){
        '<div style="font-size:.7rem;color:var(--ink-2)">ни разу не продавалась — рыночной цены нет</div>');
 
   document.getElementById('gift-body').innerHTML=
-    '<div class="coin-wrap" onclick="tossCoin(this)">'+
+    (isShield
+      ? '<div class="shield-wrap" onclick="spinShield(this)"><div class="shield3d spin">'+SHIELD_3D+'</div></div>'+
+        '<div class="coin-hint">нажмите, чтобы крутануть</div>'
+      : '')+
+    (isShield?'':'<div class="coin-wrap" onclick="tossCoin(this)">')+
       '<div class="coin" id="the-coin">'+
         '<div class="face front">'+SHIELD_SVG+'</div>'+
         '<div class="face back"><b>DEV</b></div>'+
       '</div>'+
     '</div>'+
-    '<div class="coin-hint">нажмите, чтобы подбросить</div>'+
+    (isShield?'':'<div class="coin-hint">нажмите, чтобы подбросить</div>')+
     '<div style="text-align:center;margin-top:14px">'+
       '<b style="font-size:1.3rem">'+esc(g.name)+'</b>'+
       '<div style="font-size:.84rem;color:var(--ink-2);margin-top:2px">№'+g.num+' из '+g.total+' · отчеканена '+new Date(g.issued).toLocaleDateString('ru')+'</div>'+
@@ -4599,7 +4739,23 @@ function showGiftCard(g){
       ? '<button class="btn ghost" onclick="closeSheets();unsellCard(\''+g.id+'\')">Снять с продажи · '+g.price.toLocaleString('ru')+' ₽</button>'
       : '<button class="btn" onclick="closeSheets();openSellCard(\''+g.id+'\',\''+esc(g.name)+'\')">Продать на бирже</button>'):'');
   openSheet('sheet-gift');
-  setTimeout(()=>{const c=document.getElementById('the-coin');if(c)tossCoin(c.parentNode)},350);
+  if(isShield){
+    setTimeout(()=>{
+      const w=document.querySelector('#gift-body .shield-wrap');
+      if(w){burstAt(w,'star');setTimeout(()=>burstAt(w,'deal'),200)}
+      const el=document.querySelector('#gift-body .shield3d');
+      if(el)setTimeout(()=>el.classList.remove('spin'),1620);
+    },900);
+  }else{
+    setTimeout(()=>{const c=document.getElementById('the-coin');if(c)tossCoin(c.parentNode)},350);
+  }
+}
+function spinShield(wrap){
+  const el=wrap.querySelector('.shield3d');
+  if(!el||el.classList.contains('spin'))return;
+  el.classList.add('spin');
+  burstAt(wrap,'star');
+  setTimeout(()=>el.classList.remove('spin'),1620);
 }
 function tossCoin(wrap){
   const c=wrap.querySelector('.coin');
@@ -4628,7 +4784,7 @@ function renderShelf(){
   box.style.padding='14px 12px';
   box.innerHTML='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">'+
     items.map((g,i)=>'<div class="nft-card" onclick="openGift('+i+')">'+
-      '<div class="nft-mini">'+SHIELD_SVG+'</div>'+
+      '<div class="nft-mini"'+(g.type==='aegis'?' style="background:radial-gradient(circle at 34% 28%,#EFEAFF,#B7A9EE 55%,#7A68D8 100%)"':'')+'>'+SHIELD_SVG+'</div>'+
       '<b style="font-size:.86rem;display:block">'+esc(g.name||'')+'</b>'+
       '<span style="font-size:.68rem;color:var(--ink-2)">#'+g.num+' из '+g.total+'</span>'+
       '<div style="margin-top:4px">'+Array.from({length:g.rarityNum||1},()=>'<span class="rar-dot"></span>').join('')+'</div>'+

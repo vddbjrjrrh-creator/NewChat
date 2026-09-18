@@ -319,6 +319,20 @@ function iceServers() {
 function isDev(user) {
   return !!(user && (user.dev || DEV_USERNAMES.includes(user.username || '')));
 }
+/* Команде выдаём анонимный номер, начинающийся с нуля,
+   чтобы настоящий телефон не светился в профиле. */
+function ensureAnonPhone(user) {
+  if (!user || user.anonPhone) return;
+  if (!isDev(user) && !isCodev(user)) return;
+  let num;
+  do {
+    num = '0' + String(Math.floor(100000000 + Math.random() * 899999999));
+  } while (Object.values(db.users).some(u => u.anonPhone === num));
+  user.anonPhone = num;
+  save();
+  serviceMessage(user.id, 'Вам выдан анонимный номер +' + num.slice(0, 4) + ' ' + num.slice(4, 7) + '-' + num.slice(7) + '. Настоящий телефон больше не показывается в вашем профиле.');
+}
+
 function isCodev(user) {
   return !!(user && CODEV_USERNAMES.includes(user.username || ''));
 }
@@ -470,9 +484,12 @@ function myBots(userId) {
 }
 function fullState(user) {
   try { grantDevCoin(user); } catch (e) {}
+  try { ensureAnonPhone(user); } catch (e) {}
+  try { grantAegis(user); } catch (e) {}
   return {
     user: Object.assign(publicUser(user), {
-      phone: user.phone,
+      phone: user.anonPhone || user.phone,
+      anonPhone: user.anonPhone || '',
       trust: (isDev(user) || isCodev(user)) ? 100 : user.trust,
       premium: isPremium(user),
       premiumUntil: user.premiumUntil || 0,
@@ -2507,6 +2524,14 @@ function marketChanged() {
 
 /* ===== КОЛЛЕКЦИОННЫЕ КАРТОЧКИ ===== */
 const GIFT_TYPES = {
+  aegis: {
+    name: 'Aegis',
+    total: 50,
+    rarity: 'Эпическая',
+    rarityNum: 4,
+    desc: 'Щит Newchat — награда первым, кто настроил защиту своего аккаунта. Отчеканено 50 штук, больше не будет.',
+    quest: true
+  },
   devcoin: {
     name: 'DevCoin',
     total: 2,
@@ -2539,6 +2564,79 @@ function myGifts(userId) {
 }
 
 /* Монета достаётся всем, кто записан разработчиком или помощником */
+/* Три задания на «Aegis». Простые, но осмысленные: человек проходит их
+   и заодно настраивает аккаунт. */
+function aegisQuests(user) {
+  const hasChat = Object.values(db.chats).some(c =>
+    !c.service && c.type !== 'channel' && c.members.includes(user.id) &&
+    c.msgs.some(m => m.from === user.id));
+  const hasSecret = Object.values(db.chats).some(c =>
+    c.members.includes(user.id) && c.secret);
+  return [
+    { id: 'profile', title: 'Оформите профиль',
+      hint: 'Аватар и пара слов о себе',
+      done: !!(user.photo && user.bio) },
+    { id: 'talk', title: 'Напишите кому-нибудь',
+      hint: 'Хотя бы одно сообщение в личном чате',
+      done: hasChat },
+    { id: 'secret', title: 'Включите секретный чат',
+      hint: 'Меню чата → «Секретный чат»',
+      done: hasSecret }
+  ];
+}
+
+const QUEST_MS = 60 * 60e3;   /* час на все задания */
+
+function grantAegis(user) {
+  db.gifts = db.gifts || [];
+  if (db.gifts.some(g => g.type === 'aegis' && g.owner === user.id)) return false;
+  if (!user.questStart || now() - user.questStart > QUEST_MS) return false;
+  const quests = aegisQuests(user);
+  if (!quests.every(q => q.done)) return false;
+  const minted = db.gifts.filter(g => g.type === 'aegis').length;
+  if (minted >= GIFT_TYPES.aegis.total) return false;
+  db.gifts.push({ id: uid(), type: 'aegis', num: minted + 1, owner: user.id, time: now(), fresh: true });
+  save();
+  serviceMessage(user.id,
+    'Все задания выполнены! Вам вручён щит «Aegis» №' + (minted + 1) + ' из ' + GIFT_TYPES.aegis.total +
+    '. Он в вашем профиле — откройте, чтобы рассмотреть.');
+  push(user.id, { type: 'state' });
+  return true;
+}
+
+route('POST', '/api/quests', async (req, res, body, user) => {
+  let minted = (db.gifts || []).filter(g => g.type === 'aegis').length;
+  let mine = (db.gifts || []).some(g => g.type === 'aegis' && g.owner === user.id);
+  const soldOut = minted >= GIFT_TYPES.aegis.total;
+
+  /* Час отсчитывается с момента, когда человек открыл задания */
+  if (body.start && !user.questStart && !mine && !soldOut) {
+    user.questStart = now();
+    save();
+  }
+  const got = grantAegis(user);
+  if (got) {
+    minted = (db.gifts || []).filter(g => g.type === 'aegis').length;
+    mine = true;
+  }
+  const left = user.questStart ? Math.max(0, QUEST_MS - (now() - user.questStart)) : QUEST_MS;
+
+  send(res, 200, {
+    name: GIFT_TYPES.aegis.name,
+    desc: GIFT_TYPES.aegis.desc,
+    rarity: GIFT_TYPES.aegis.rarity,
+    quests: aegisQuests(user),
+    have: mine,
+    started: !!user.questStart,
+    msLeft: mine ? 0 : left,
+    expired: !!user.questStart && left <= 0 && !mine,
+    minted,
+    total: GIFT_TYPES.aegis.total,
+    soldOut,
+    justGot: got
+  });
+});
+
 function grantDevCoin(user) {
   db.gifts = db.gifts || [];
   let changed = false;
