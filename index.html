@@ -249,6 +249,16 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
   box-shadow:0 8px 22px rgba(31,32,64,.18);max-width:62vw;display:none;animation:msgIn .3s;line-height:1.3}
 .chatty-bubble.on{display:block}
 .chatty svg{width:100%;height:100%}
+/* Экономный режим: отключаем всё, что нагружает слабые телефоны */
+html.lite .lava,html.lite .lava .g{display:none}
+html.lite .glow::after,html.lite .quest-bar::after,html.lite .nft-card::before{display:none}
+html.lite *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+html.lite .glass,html.lite .glass-card,html.lite .sheet{box-shadow:0 2px 8px rgba(31,32,64,.1)}
+html.lite .msg{animation:none!important}
+html.lite .chatty{animation:none!important}
+html.lite .quest-ic svg{animation:none!important}
+html.lite .coin.flip,html.lite .shield3d.spin{animation-duration:.8s}
+html.lite .screen{transition:none!important}
 .glow{position:relative}
 .glow::after{content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
   background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.35) 50%,transparent 70%);
@@ -1173,6 +1183,13 @@ body{
       </label>
       <input type="file" id="msgsnd-file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav" style="position:absolute;width:1px;height:1px;opacity:0" onchange="pickMsgSound(this)">
 
+      <div class="w-section">Производительность</div>
+      <div class="set-row glass-card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="color:var(--accent)"><path d="M13 2L4.5 13H11l-1 9 8.5-11H12l1-9z"/></svg>
+        <div><b>Экономный режим</b><p>Меньше анимаций и размытий — для слабых телефонов</p></div>
+        <div class="tgl" id="tgl-lite" onclick="setLite(!liteOn())"></div>
+      </div>
+
       <div class="w-section">Эффекты</div>
       <div class="set-row glass-card">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="color:var(--accent)"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>
@@ -1787,8 +1804,9 @@ const tokenStore={
 /* Копилка ошибок — тап по номеру версии в профиле покажет их */
 try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.classList.add('dark')}catch(e){}
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
+try{if(localStorage.getItem('newchat_lite')==='1')document.documentElement.classList.add('lite')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 50;
+const APP_VERSION = 51;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2157,6 +2175,7 @@ async function checkServerFresh(){
 function enterApp(){
   go('s-chats');
   checkServerFresh();
+  measureDevice();
   checkUpdate();
   publishKey();
   prefetchOwnSounds();
@@ -2428,6 +2447,10 @@ function connectWS(){
     let d;try{d=JSON.parse(ev.data)}catch(e){return}
     if(d.type==='message'){
       const chat=S.chats.find(c=>c.id===d.chatId);
+      if(!chat){
+        /* Чата ещё нет у нас — это первое сообщение или служебное уведомление */
+        refresh().then(()=>{renderChats();updateChatty()}).catch(()=>{});
+      }
       if(chat){
         chat.msgs.push(d.message);
         if(currentChat===d.chatId){
@@ -2455,7 +2478,7 @@ function connectWS(){
       if(m){m.deleted=true;if(currentChat===d.chatId)renderMsgs(chat)}
     }
     if(d.type==='market'){scheduleSync()}
-    if(d.type==='state'){scheduleSync()}
+    if(d.type==='state'){scheduleFull()}
     if(d.type==='typing'){gotTyping(d.chatId)}
     if(d.type==='read'){
       const c=S.chats.find(x=>x.id===d.chatId);
@@ -3447,7 +3470,7 @@ const WP_NAMES={aurora:'Сияние',ocean:'Океан',sunset:'Закат',for
 
 /* Эффекты: летящие символы при событиях */
 function burst(kind,x,y){
-  if(!fxOn())return;
+  if(!fxOn()||liteOn())return;
   const sets={
     send:['✦','✧','·'],
     like:['❤️','💗','✨'],
@@ -3542,6 +3565,50 @@ async function disablePush(){
 }
 function pushOn(){try{return localStorage.getItem('newchat_push')==='1'}catch(e){return false}}
 function togglePush(){if(pushOn())disablePush();else enablePush()}
+
+/* ===== ЭКОНОМНЫЙ РЕЖИМ =====
+   Смотрим, тянет ли телефон анимации. Если нет — выключаем лишнее. */
+function liteOn(){
+  try{
+    const v=localStorage.getItem('newchat_lite');
+    if(v==='1')return true;
+    if(v==='0')return false;
+  }catch(e){}
+  return false;
+}
+function applyLite(){
+  document.documentElement.classList.toggle('lite',liteOn());
+}
+function setLite(on,silent){
+  try{localStorage.setItem('newchat_lite',on?'1':'0')}catch(e){}
+  applyLite();
+  if(!silent)toast(on?'Экономный режим включён':'Экономный режим выключен');
+  if(typeof renderLook==='function')renderLook();
+}
+function measureDevice(){
+  /* Уже решали — не меряем заново */
+  try{if(localStorage.getItem('newchat_lite')!==null)return}catch(e){}
+
+  const cores=navigator.hardwareConcurrency||2;
+  const mem=navigator.deviceMemory||2;
+  let frames=0;
+  const t0=performance.now();
+  function tick(){
+    frames++;
+    if(performance.now()-t0<900){requestAnimationFrame(tick);return}
+    const fps=frames/((performance.now()-t0)/1000);
+    const weak=fps<42||cores<=4||mem<=2;
+    if(weak){
+      setLite(true,true);
+      setTimeout(()=>{
+        toast('Телефон не тянет анимации — включил экономный режим. Выключить можно в настройках.');
+      },1500);
+    }else{
+      try{localStorage.setItem('newchat_lite','0')}catch(e){}
+    }
+  }
+  requestAnimationFrame(tick);
+}
 
 let MAX_MB=10,MUSIC_MB=12;
 /* Серверы для звонков: приходят из конфига, здесь — запасной вариант */
@@ -4849,6 +4916,9 @@ function renderLook(){
       : '<div style="text-align:center;color:var(--ink-2);font-size:.84rem">Трек увидят все, кто откроет ваш профиль. Они смогут его послушать и скачать.<br><b style="color:var(--ink)">До '+MUSIC_MB+' МБ</b> — обычная песня помещается.</div>';
   }
 
+  const tl=document.getElementById('tgl-lite');
+  if(tl)tl.classList.toggle('on',liteOn());
+
   const tp=document.getElementById('tgl-push');
   if(tp)tp.classList.toggle('on',pushOn());
   const pn=document.getElementById('push-note');
@@ -5590,11 +5660,28 @@ let marketPoll=null;
    Нужна, чтобы после покупки, продажи и сделок не приходилось перезаходить. */
 /* Обновляет только биржу, сделки и коллекцию — это мелкие данные.
    Полное состояние с перепиской не трогаем: оно тяжёлое. */
-let syncTimer=null;
+let syncTimer=null,lastFull=0;
 /* Событий может прийти сразу много — собираем их в один запрос */
 function scheduleSync(){
   clearTimeout(syncTimer);
   syncTimer=setTimeout(syncAll,900);
+}
+/* Полное обновление: нужно, когда меняются сами чаты — обои, секретный режим,
+   служебные сообщения. Не чаще раза в 8 секунд, чтобы не грузить сервер. */
+function scheduleFull(){
+  if(Date.now()-lastFull<8000){scheduleSync();return}
+  lastFull=Date.now();
+  refresh().then(()=>{
+    const a=document.querySelector('.screen.active');
+    const id=a?a.id:'';
+    if(id==='s-chats')renderChats();
+    if(id==='s-chat'){
+      const c=S.chats.find(x=>x.id===currentChat);
+      if(c){applyWallpaper(c);renderMsgs(c);decryptChat(c)}
+    }
+    if(id==='s-profile'){renderProfile();renderShelf()}
+    updateChatty();
+  }).catch(()=>{});
 }
 let syncBusy=false,syncQueued=false;
 async function syncAll(){
