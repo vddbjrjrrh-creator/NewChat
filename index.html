@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Newchat</title>
 <link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#6C5CE7">
+<meta name="theme-color" id="theme-color-meta" content="#EEF0F5">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -254,12 +254,24 @@ html.lite .lava,html.lite .lava .g{display:none}
 html.lite .glow::after,html.lite .quest-bar::after,html.lite .nft-card::before{display:none}
 html.lite *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 html.lite .glass,html.lite .glass-card,html.lite .sheet{box-shadow:0 2px 8px rgba(31,32,64,.1)}
-html.lite .msg{animation:none!important}
 html.lite .chatty{animation:none!important}
 html.lite .quest-ic svg{animation:none!important}
-html.lite .coin.flip,html.lite .shield3d.spin{animation-duration:.8s}
-html.lite .screen{transition:none!important}
 /* Запрос согласия прямо в переписке */
+/* Свой плеер голосовых: системный выглядит чужеродно */
+.va{display:flex;align-items:center;gap:10px;min-width:210px;padding:2px 0}
+.va-btn{width:38px;height:38px;flex:none;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.22);color:inherit;display:flex;align-items:center;justify-content:center}
+.msg.in .va-btn{background:var(--accent-soft);color:var(--accent)}
+.va-wave{flex:1;height:26px;display:flex;align-items:center;gap:2px;overflow:hidden}
+.va-wave i{flex:1;background:currentColor;opacity:.35;border-radius:2px;min-width:2px;transition:opacity .2s}
+.va-wave i.on{opacity:.95}
+.va-time{font-size:.72rem;font-variant-numeric:tabular-nums;opacity:.8;min-width:34px;text-align:right}
+/* Фото и видео в переписке */
+.msg .ph{display:block;max-width:100%;border-radius:14px;cursor:pointer}
+.msg .ph-wrap{position:relative;display:inline-block;max-width:100%}
+.ph-save{position:absolute;right:8px;bottom:8px;width:32px;height:32px;border-radius:50%;
+  background:rgba(20,18,40,.6);backdrop-filter:blur(6px);border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:#fff}
 .req-card{align-self:center;max-width:88%;margin:8px 0;padding:14px 16px;border-radius:18px;
   background:var(--glass-2);border:1px solid var(--edge);text-align:center;
   box-shadow:0 6px 18px rgba(31,32,64,.1);animation:msgIn .3s}
@@ -590,7 +602,8 @@ body{
 .batt{display:inline-flex;align-items:center;gap:7px}
 .batt-body{border:2.5px solid currentColor;border-radius:7px;position:relative;padding:4px;width:64px;height:28px}
 .batt-body::after{content:"";position:absolute;right:-7px;top:8px;width:4.5px;height:10px;background:currentColor;border-radius:0 2px 2px 0}
-.batt-fill{height:100%;border-radius:3px;background:currentColor}
+.batt-fill{display:block;height:100%;border-radius:3px;background:currentColor;
+  transition:width .5s cubic-bezier(.22,1,.36,1);min-width:2px}
 
 /* ===== Кошелёк ===== */
 .wallet-hero{
@@ -1822,7 +1835,7 @@ try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.class
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 try{if(localStorage.getItem('newchat_lite')==='1')document.documentElement.classList.add('lite')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 52;
+const APP_VERSION = 53;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -2934,6 +2947,52 @@ async function answerReq(kind,accept){
     if(accept)burst('star',innerWidth/2,innerHeight/2);
   }catch(e){}
 }
+let voiceAudio=null,voiceId='';
+function playVoice(id,btn){
+  const c=S.chats.find(x=>x.id===currentChat);
+  const m=c&&c.msgs.find(x=>x.id===id);
+  if(!m||!m.media)return;
+  const icon=on=>on
+    ? '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="currentColor" width="17" height="17"><path d="M8 5.5v13l11-6.5z"/></svg>';
+  const stop=()=>{
+    if(voiceAudio){try{voiceAudio.pause()}catch(e){}}
+    document.querySelectorAll('.va-btn').forEach(b=>b.innerHTML=icon(false));
+    document.querySelectorAll('.va-wave i').forEach(b=>b.classList.remove('on'));
+    voiceAudio=null;voiceId='';
+  };
+  if(voiceId===id){stop();return}
+  stop();
+  try{
+    voiceAudio=new Audio(m.media.data);
+    voiceId=id;
+    btn.innerHTML=icon(true);
+    const wrap=document.querySelector('[data-va="'+id+'"]');
+    const bars=wrap?wrap.querySelectorAll('.va-wave i'):[];
+    voiceAudio.ontimeupdate=()=>{
+      if(!voiceAudio||!voiceAudio.duration)return;
+      const p=voiceAudio.currentTime/voiceAudio.duration;
+      bars.forEach((b,i)=>b.classList.toggle('on',i/bars.length<=p));
+      const t=Math.floor(voiceAudio.currentTime);
+      const tm=wrap&&wrap.querySelector('.va-time');
+      if(tm)tm.textContent=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+    };
+    voiceAudio.onended=stop;
+    voiceAudio.play().catch(()=>stop());
+  }catch(e){stop()}
+}
+function savePhoto(id){
+  const c=S.chats.find(x=>x.id===currentChat);
+  const m=c&&c.msgs.find(x=>x.id===id);
+  if(!m||!m.media)return;
+  try{
+    const a=document.createElement('a');
+    a.href=dataToBlobUrl(m.media.data);
+    a.download='newchat-'+Date.now()+'.jpg';
+    document.body.appendChild(a);a.click();a.remove();
+    toast('Сохранено в Загрузки');
+  }catch(e){toast('Не удалось сохранить')}
+}
 function renderMsgs(c){
   const box=document.getElementById('chat-msgs');
   if(!c.msgs.length){
@@ -2950,9 +3009,21 @@ function renderMsgs(c){
     else{
       if(m.enc&&!m.plain&&!m.out)body+='<div style="opacity:.6;font-style:italic">🔒 расшифровываем…</div>';
       if(m.fwd)body+='<div style="font-size:.72rem;opacity:.75;margin-bottom:3px">↪ Переслано от <b>'+esc(m.fwd.name)+'</b></div>';
-      if(m.reply)body+='<div style="border-left:2.5px solid '+(m.out?'rgba(255,255,255,.7)':'var(--accent)')+';padding:2px 8px;margin-bottom:5px;border-radius:4px;background:'+(m.out?'rgba(255,255,255,.15)':'var(--accent-soft)')+'"><b style="font-size:.72rem">'+esc(m.reply.name)+'</b><div style="font-size:.76rem;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.reply.text)+'</div></div>';
-      if(m.media&&m.media.kind==='photo')body+='<img src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">';
-      if(m.media&&m.media.kind==='voice')body+='<audio controls preload="metadata" src="'+m.media.data+'" onclick="event.stopPropagation()"></audio>';
+      if(m.reply)body+='<div style="border-left:2.5px solid '+(m.out?'rgba(255,255,255,.7)':'var(--accent)')+';padding:2px 8px;margin-bottom:5px;border-radius:4px;background:'+(m.out?'rgba(255,255,255,.15)':'var(--accent-soft)')+'"><b style="font-size:.72rem">'+esc(m.reply.name)+'</b><div style="font-size:.76rem;opacity:.85;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35">'+esc(m.reply.text)+'</div></div>';
+      if(m.media&&m.media.kind==='photo'){
+        body+='<span class="ph-wrap"><img class="ph" src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">'+
+          '<button class="ph-save" onclick="event.stopPropagation();savePhoto(\''+m.id+'\')" title="скачать">'+
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="16" height="16"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg></button></span>';
+      }
+      if(m.media&&m.media.kind==='voice'){
+        const bars=Array.from({length:26},(_,i)=>'<i style="height:'+(22+Math.round(Math.sin(i*1.7)*10+Math.cos(i*.9)*8))+'%"></i>').join('');
+        const dur=m.media.dur?(String(Math.floor(m.media.dur/60))+':'+String(m.media.dur%60).padStart(2,'0')):'0:00';
+        body+='<div class="va" data-va="'+m.id+'" onclick="event.stopPropagation()">'+
+          '<button class="va-btn" onclick="event.stopPropagation();playVoice(\''+m.id+'\',this)">'+
+          '<svg viewBox="0 0 24 24" fill="currentColor" width="17" height="17"><path d="M8 5.5v13l11-6.5z"/></svg></button>'+
+          '<span class="va-wave">'+bars+'</span>'+
+          '<span class="va-time">'+dur+'</span></div>';
+      }
       if(m.media&&m.media.kind==='file'){
         body+='<div onclick="event.stopPropagation();saveFile(\''+m.id+'\')" style="display:flex;align-items:center;gap:10px;padding:9px 4px;cursor:pointer">'+
           '<span style="width:38px;height:38px;border-radius:11px;background:'+(m.out?'rgba(255,255,255,.22)':'var(--accent-soft)')+';display:flex;align-items:center;justify-content:center;flex:none">'+
@@ -3661,7 +3732,8 @@ function measureDevice(){
     frames++;
     if(performance.now()-t0<900){requestAnimationFrame(tick);return}
     const fps=frames/((performance.now()-t0)/1000);
-    const weak=fps<42||cores<=4||mem<=2;
+    /* Порог низкий: экономный режим только для действительно слабых телефонов */
+    const weak=fps<28||(cores<=2&&mem<=1);
     if(weak){
       setLite(true,true);
       setTimeout(()=>{
@@ -5263,7 +5335,8 @@ function applyDark(){
   const on=darkOn();
   document.documentElement.classList.toggle('dark',on);
   const meta=document.querySelector('meta[name="theme-color"]');
-  if(meta)meta.content=on?'#0B0D1E':'#6C5CE7';
+  /* Цвет системных полос совпадает с фоном приложения — без белых стыков */
+  if(meta)meta.content=on?'#0B0D1E':'#EEF0F5';
 }
 function toggleDark(){
   try{localStorage.setItem('newchat_dark',darkOn()?'0':'1')}catch(e){}
