@@ -1430,7 +1430,7 @@ route('POST', '/api/profile/setup', async (req, res, body, user) => {
   if (username.length < 5) return send(res, 400, { error: 'Юзернейм — минимум 5 символов' });
   if (db.usernames[username]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
 
-  user.name = name;
+  user.name = cleanText(name, 30);
   user.username = username;
   user.dev = DEV_USERNAMES.includes(username);
   user.codev = CODEV_USERNAMES.includes(username);
@@ -1464,7 +1464,7 @@ route('POST', '/api/profile/update', async (req, res, body, user) => {
   if (typeof body.cover === 'number') user.cover = body.cover;
   if (typeof body.ava === 'number') user.ava = body.ava;
   if (typeof body.banner === 'number') user.banner = Math.max(0, Math.min(7, body.banner));
-  if (typeof body.status === 'string') user.status = body.status.slice(0, 40);
+  if (typeof body.status === 'string') user.status = cleanText(body.status, 40);
   if (typeof body.name === 'string' && body.name.trim()) user.name = body.name.trim().slice(0, 30);
   if (typeof body.photo === 'string') {
     /* Аватарка: маленький jpeg в base64, клиент сжимает сам */
@@ -1544,7 +1544,7 @@ function validMedia(media) {
 
 route('POST', '/api/messages/send', async (req, res, body, user) => {
   const chat = db.chats[body.chatId];
-  const text = String(body.text || '').trim().slice(0, 4000);
+  const text = cleanText(body.text, 4000);
   const media = validMedia(body.media);
 
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
@@ -2605,7 +2605,7 @@ route('POST', '/api/search', async (req, res, body, user) => {
 /* ---------- Каналы ---------- */
 
 route('POST', '/api/channels/create', async (req, res, body, user) => {
-  const title = String(body.title || '').trim().slice(0, 40);
+  const title = cleanText(body.title, 40);
   const uname = normUsername(body.username);
   if (!title) return send(res, 400, { error: 'Введите название канала' });
   if (uname && uname.length < 5) return send(res, 400, { error: 'Юзернейм канала — минимум 5 символов' });
@@ -3317,7 +3317,7 @@ route('POST', '/api/profile/style', async (req, res, body, user) => {
     user.cover = n;
     user.coverImg = null;
   }
-  if (body.bio !== undefined) user.bio = String(body.bio || '').slice(0, 140);
+  if (body.bio !== undefined) user.bio = cleanText(body.bio, 140);
   if (body.icon !== undefined) {
     if (!isPremium(user)) return send(res, 403, { error: 'Смена иконки доступна с премиумом' });
     user.icon = String(body.icon || '').slice(0, 20);
@@ -3483,6 +3483,78 @@ route('POST', '/api/help/ask', async (req, res, body, user) => {
   });
 });
 
+
+/* ===== ЗАЩИТА ОТ ПЕРЕГРУЗКИ И АТАК =====
+   Считаем запросы по IP. Обычному человеку хватает десятков в минуту,
+   а бот выдаёт сотни — его и придерживаем. */
+/* Чистим текст от того, чем можно сломать чужое приложение */
+function cleanText(v, max) {
+  let t = String(v == null ? '' : v);
+  t = t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ''); /* управляющие символы */
+  t = t.replace(/[\u202A-\u202E\u2066-\u2069]/g, '');                      /* переворот текста */
+  t = t.replace(/(\p{Mn}|\p{Me}){6,}/gu, '');                               /* «залитые» символы */
+  t = t.replace(/\n{6,}/g, '\n\n\n');                                      /* растягивание экрана */
+  return t.slice(0, max || 4000).trim();
+}
+
+const ipStats = new Map();
+const ipBans = new Map();
+
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) return String(fwd).split(',')[0].trim();
+  return (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+
+const LIMITS = {
+  perMinute: 240,        /* обычных запросов в минуту с одного адреса */
+  writesPerMinute: 60,   /* отправок сообщений, лотов и прочих записей */
+  signupsPerHour: 5,     /* попыток регистрации с одного адреса */
+  banMinutes: 10
+};
+
+function rateCheck(req, url) {
+  const ip = clientIp(req);
+  const t = Date.now();
+
+  const ban = ipBans.get(ip);
+  if (ban && ban > t) return { ok: false, retry: Math.ceil((ban - t) / 1000) };
+  if (ban) ipBans.delete(ip);
+
+  let st = ipStats.get(ip);
+  if (!st || t - st.start > 60000) {
+    st = { start: t, all: 0, writes: 0, signups: (st && t - st.hourStart < 3600000) ? st.signups : 0,
+           hourStart: (st && t - st.hourStart < 3600000) ? st.hourStart : t };
+    ipStats.set(ip, st);
+  }
+  st.all++;
+
+  const isWrite = req.method === 'POST' && !/\/api\/(state|market|config|health)/.test(url);
+  if (isWrite) st.writes++;
+  if (/\/api\/auth\/(request|verify)/.test(url) || /\/api\/profile\/setup/.test(url)) {
+    if (t - st.hourStart > 3600000) { st.hourStart = t; st.signups = 0; }
+    st.signups++;
+    if (st.signups > LIMITS.signupsPerHour) {
+      ipBans.set(ip, t + LIMITS.banMinutes * 60000);
+      return { ok: false, retry: LIMITS.banMinutes * 60, reason: 'Слишком много регистраций' };
+    }
+  }
+
+  if (st.all > LIMITS.perMinute || st.writes > LIMITS.writesPerMinute) {
+    ipBans.set(ip, t + LIMITS.banMinutes * 60000);
+    console.warn('Перегрузка с ' + ip + ': ' + st.all + ' запросов, ' + st.writes + ' записей за минуту — пауза');
+    return { ok: false, retry: LIMITS.banMinutes * 60, reason: 'Слишком много запросов' };
+  }
+  return { ok: true };
+}
+
+/* Раз в 10 минут чистим счётчики, чтобы память не росла */
+setInterval(() => {
+  const t = Date.now();
+  for (const [ip, st] of ipStats) if (t - st.start > 600000) ipStats.delete(ip);
+  for (const [ip, until] of ipBans) if (until < t) ipBans.delete(ip);
+}, 600000);
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -3494,6 +3566,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = req.url.split('?')[0];
+
+  /* Придерживаем тех, кто долбит сервер запросами */
+  const rl = rateCheck(req, url);
+  if (!rl.ok) {
+    res.writeHead(429, {
+      'content-type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Retry-After': String(rl.retry)
+    });
+    return res.end(JSON.stringify({
+      error: (rl.reason || 'Слишком много запросов') + '. Подождите ' + Math.ceil(rl.retry / 60) + ' мин.'
+    }));
+  }
 
   /* API ботов: авторизация токеном в адресе, обычный вход не нужен */
   if (url.startsWith('/api/bot/')) {
