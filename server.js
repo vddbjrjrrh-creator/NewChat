@@ -140,7 +140,12 @@ async function load() {
     }
   }
 
-  console.warn('ВНИМАНИЕ: база хранится в файле. На бесплатном Render аккаунты пропадут при перезапуске. Задайте DATABASE_URL.');
+  console.warn('=====================================================');
+  console.warn('ВНИМАНИЕ: база хранится в ФАЙЛЕ, а не в Postgres.');
+  console.warn('На Render файл стирается при каждом деплое и перезапуске —');
+  console.warn('все аккаунты, чаты и карточки пропадут.');
+  console.warn('Задайте переменную DATABASE_URL (строка подключения Neon).');
+  console.warn('=====================================================');
   try {
     if (fs.existsSync(DATA_FILE)) {
       db = Object.assign(db, JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
@@ -2914,6 +2919,7 @@ const OPEN_ROUTES = [
   'POST /telegram/webhook',
   'POST /api/admin/deals',
   'GET /api/config',
+  'GET /api/health',
   'GET /api/health'
 ];
 
@@ -3197,6 +3203,21 @@ route('POST', '/api/gifts/buy', async (req, res, body, user) => {
   push(user.id, { type: 'state' });
   marketChanged();
   send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
+});
+
+route('GET', '/api/health', async (req, res, body, user) => {
+  /* Открытая проверка: куда сохраняются данные и сколько их */
+  send(res, 200, {
+    ok: true,
+    storage: pgPool ? 'postgres' : 'file',
+    warning: pgPool ? '' : 'Данные в файле — пропадут при перезапуске сервера. Задайте DATABASE_URL.',
+    users: Object.keys(db.users).length,
+    chats: Object.keys(db.chats).length,
+    messages: Object.values(db.chats).reduce((a, c) => a + (c.msgs ? c.msgs.length : 0), 0),
+    gifts: (db.gifts || []).length,
+    uptimeMin: Math.round(process.uptime() / 60),
+    build: 'v54'
+  });
 });
 
 route('GET', '/api/market', async (req, res, body, user) => {
