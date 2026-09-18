@@ -267,6 +267,7 @@ function publicUser(u) {
     photo: u.photo || null, banner: typeof u.banner === 'number' ? u.banner : 0,
     bot: !!u.isBot, anon: !!u.anon,
     phoneOk: !!u.phone,
+    anonPhone: u.anonPhone ? ('+0 ' + u.anonPhone.slice(1, 4) + ' •••-••-' + u.anonPhone.slice(-2)) : '',
     hasKey: !!u.pubkey,
     codev: isCodev(u),
     bio: u.bio || '',
@@ -319,19 +320,6 @@ function iceServers() {
 function isDev(user) {
   return !!(user && (user.dev || DEV_USERNAMES.includes(user.username || '')));
 }
-/* Команде выдаём анонимный номер, начинающийся с нуля,
-   чтобы настоящий телефон не светился в профиле. */
-function ensureAnonPhone(user) {
-  if (!user || user.anonPhone) return;
-  if (!isDev(user) && !isCodev(user)) return;
-  let num;
-  do {
-    num = '0' + String(Math.floor(100000000 + Math.random() * 899999999));
-  } while (Object.values(db.users).some(u => u.anonPhone === num));
-  user.anonPhone = num;
-  save();
-  serviceMessage(user.id, 'Вам выдан анонимный номер +' + num.slice(0, 4) + ' ' + num.slice(4, 7) + '-' + num.slice(7) + '. Настоящий телефон больше не показывается в вашем профиле.');
-}
 
 function isCodev(user) {
   return !!(user && CODEV_USERNAMES.includes(user.username || ''));
@@ -377,6 +365,8 @@ function chatView(c, userId) {
     muted: !!(me.muted || {})[c.id],
     ttl: c.ttl || 0,
     secret: !!c.secret,
+    secretOffer: (c.secretOffer && c.secretOffer.from !== userId) ? c.secretOffer : null,
+    secretPending: !!(c.secretOffer && c.secretOffer.from === userId),
     wp: ((c.wpFor || {})[userId]) || c.wp || '',
     wpOffer: (c.wpOffer && c.wpOffer.from !== userId) ? c.wpOffer : null,
     blocked: type === 'dm' && peer && peer.id ? !!(me.blocked || {})[peer.id] : false,
@@ -488,7 +478,9 @@ function fullState(user) {
   try { grantAegis(user); } catch (e) {}
   return {
     user: Object.assign(publicUser(user), {
-      phone: user.anonPhone || user.phone,
+      phone: user.anonPhone
+        ? ('+0 ' + user.anonPhone.slice(1, 4) + ' ' + user.anonPhone.slice(4, 7) + '-' + user.anonPhone.slice(7, 9) + '-' + user.anonPhone.slice(9, 11))
+        : user.phone,
       anonPhone: user.anonPhone || '',
       trust: (isDev(user) || isCodev(user)) ? 100 : user.trust,
       premium: isPremium(user),
@@ -2494,607 +2486,54 @@ route('POST', '/api/chats/wallpaper/answer', async (req, res, body, user) => {
 });
 
 route('POST', '/api/chats/secret', async (req, res, body, user) => {
-  /* Включает режим секретного чата: сервер перестаёт понимать содержимое */
   const chat = db.chats[String(body.chatId || '')];
   if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
   if (chat.type === 'channel' || chat.service) return send(res, 400, { error: 'Только для личных чатов' });
-  chat.secret = !!body.on;
-  save();
   const pid = chat.members.find(m => m !== user.id);
-  if (pid) {
-    serviceMessage(pid, chat.secret
-      ? 'Собеседник включил секретный чат. Сообщения шифруются на устройствах — сервер их не читает. Жалобы со слепком переписки в таком чате недоступны.'
-      : 'Секретный чат выключен.');
-    push(pid, { type: 'state' });
-  }
-  send(res, 200, { secret: chat.secret, chats: userChats(user.id) });
-});
 
-/* Помощник: отвечает на вопросы про само приложение */
-/* Биржа изменилась. Короткий сигнал не чаще раза в 5 секунд. */
-let lastMarketPing = 0;
-function marketChanged() {
-  if (now() - lastMarketPing < 5000) return;
-  lastMarketPing = now();
-  for (const u of Object.values(db.users)) {
-    if (u.isBot || !isOnline(u.id)) continue;
-    push(u.id, { type: 'market' });
-  }
-}
-
-/* ===== КОЛЛЕКЦИОННЫЕ КАРТОЧКИ ===== */
-const GIFT_TYPES = {
-  aegis: {
-    name: 'Aegis',
-    total: 50,
-    rarity: 'Эпическая',
-    rarityNum: 4,
-    desc: 'Щит Newchat — награда первым, кто настроил защиту своего аккаунта. Отчеканено 50 штук, больше не будет.',
-    quest: true
-  },
-  devcoin: {
-    name: 'DevCoin',
-    total: 2,
-    rarity: 'Легендарная',
-    rarityNum: 5,
-    desc: 'Монета создателей Newchat. Отчеканено две — по числу тех, кто писал этот мессенджер с нуля.',
-    devOnly: true
-  }
-};
-
-function myGifts(userId) {
-  return (db.gifts || [])
-    .filter(g => g.owner === userId)
-    .map(g => {
-      const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
-      const sales = (db.giftSales || []).filter(s => s.type === g.type);
-      const last = sales.length ? sales[sales.length - 1] : null;
-      return {
-        id: g.id, type: g.type, num: g.num,
-        forSale: !!g.forSale, price: g.price || 0, frozen: !!g.frozen,
-        name: t.name || g.type, total: t.total || 0,
-        rarity: t.rarity || '', rarityNum: t.rarityNum || 1,
-        desc: t.desc || '',
-        issued: g.time,
-        lastPrice: last ? last.price : 0,
-        lastSaleAt: last ? last.time : 0,
-        salesCount: sales.length
-      };
-    });
-}
-
-/* Монета достаётся всем, кто записан разработчиком или помощником */
-/* Три задания на «Aegis». Простые, но осмысленные: человек проходит их
-   и заодно настраивает аккаунт. */
-function aegisQuests(user) {
-  const hasChat = Object.values(db.chats).some(c =>
-    !c.service && c.type !== 'channel' && c.members.includes(user.id) &&
-    c.msgs.some(m => m.from === user.id));
-  const hasSecret = Object.values(db.chats).some(c =>
-    c.members.includes(user.id) && c.secret);
-  return [
-    { id: 'profile', title: 'Оформите профиль',
-      hint: 'Аватар и пара слов о себе',
-      done: !!(user.photo && user.bio) },
-    { id: 'talk', title: 'Напишите кому-нибудь',
-      hint: 'Хотя бы одно сообщение в личном чате',
-      done: hasChat },
-    { id: 'secret', title: 'Включите секретный чат',
-      hint: 'Меню чата → «Секретный чат»',
-      done: hasSecret }
-  ];
-}
-
-const QUEST_MS = 60 * 60e3;   /* час на все задания */
-
-function grantAegis(user) {
-  db.gifts = db.gifts || [];
-  if (db.gifts.some(g => g.type === 'aegis' && g.owner === user.id)) return false;
-  if (!user.questStart || now() - user.questStart > QUEST_MS) return false;
-  const quests = aegisQuests(user);
-  if (!quests.every(q => q.done)) return false;
-  const minted = db.gifts.filter(g => g.type === 'aegis').length;
-  if (minted >= GIFT_TYPES.aegis.total) return false;
-  db.gifts.push({ id: uid(), type: 'aegis', num: minted + 1, owner: user.id, time: now(), fresh: true });
-  save();
-  serviceMessage(user.id,
-    'Все задания выполнены! Вам вручён щит «Aegis» №' + (minted + 1) + ' из ' + GIFT_TYPES.aegis.total +
-    '. Он в вашем профиле — откройте, чтобы рассмотреть.');
-  push(user.id, { type: 'state' });
-  return true;
-}
-
-route('POST', '/api/quests', async (req, res, body, user) => {
-  let minted = (db.gifts || []).filter(g => g.type === 'aegis').length;
-  let mine = (db.gifts || []).some(g => g.type === 'aegis' && g.owner === user.id);
-  const soldOut = minted >= GIFT_TYPES.aegis.total;
-
-  /* Час отсчитывается с момента, когда человек открыл задания */
-  if (body.start && !user.questStart && !mine && !soldOut) {
-    user.questStart = now();
+  /* Выключить можно в одиночку — это не вредит собеседнику */
+  if (!body.on) {
+    chat.secret = false;
+    chat.secretOffer = null;
     save();
-  }
-  const got = grantAegis(user);
-  if (got) {
-    minted = (db.gifts || []).filter(g => g.type === 'aegis').length;
-    mine = true;
-  }
-  const left = user.questStart ? Math.max(0, QUEST_MS - (now() - user.questStart)) : QUEST_MS;
-
-  send(res, 200, {
-    name: GIFT_TYPES.aegis.name,
-    desc: GIFT_TYPES.aegis.desc,
-    rarity: GIFT_TYPES.aegis.rarity,
-    quests: aegisQuests(user),
-    have: mine,
-    started: !!user.questStart,
-    msLeft: mine ? 0 : left,
-    expired: !!user.questStart && left <= 0 && !mine,
-    minted,
-    total: GIFT_TYPES.aegis.total,
-    soldOut,
-    justGot: got
-  });
-});
-
-function grantDevCoin(user) {
-  db.gifts = db.gifts || [];
-  let changed = false;
-  const devs = Object.values(db.users).filter(u => !u.isBot && (isDev(u) || isCodev(u)));
-  for (const d of devs) {
-    if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
-    const minted = db.gifts.filter(g => g.type === 'devcoin').length;
-    if (minted >= GIFT_TYPES.devcoin.total) break;
-    db.gifts.push({ id: uid(), type: 'devcoin', num: minted + 1, owner: d.id, time: now() });
-    changed = true;
-    serviceMessage(d.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
-    push(d.id, { type: 'state' });
-  }
-  if (changed) save();
-}
-
-route('GET', '/api/market', async (req, res, body, user) => {
-  /* Лёгкий ответ: только лоты, без переписки и медиа */
-  send(res, 200, {
-    market: marketList(user.id),
-    giftMarket: giftMarket(user.id),
-    gifts: myGifts(user.id),
-    usernames: myUsernames(user.id),
-    deals: Object.values(db.deals)
-      .filter(d => d.seller === user.id || d.buyer === user.id)
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 20)
-      .map(d => dealView(d, user.id))
-  });
-});
-
-route('POST', '/api/gifts/sell', async (req, res, body, user) => {
-  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
-  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
-  if (g.frozen) return send(res, 400, { error: 'Карточка в сделке' });
-  if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле' });
-  if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты для получения денег' });
-  const price = Math.round(Number(body.price) || 0);
-  if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
-  if (price > 5000000) return send(res, 400, { error: 'Слишком большая цена' });
-  g.forSale = true;
-  g.price = price;
-  save();
-  marketChanged();
-  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
-});
-
-route('POST', '/api/gifts/unsell', async (req, res, body, user) => {
-  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
-  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
-  if (g.frozen) return send(res, 400, { error: 'Идёт сделка — снять нельзя' });
-  g.forSale = false;
-  g.price = 0;
-  save();
-  marketChanged();
-  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
-});
-
-route('POST', '/api/gifts/buy', async (req, res, body, user) => {
-  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
-  if (!g || !g.forSale) return send(res, 404, { error: 'Карточка не продаётся' });
-  if (g.owner === user.id) return send(res, 400, { error: 'Это ваша карточка' });
-  if (g.frozen) return send(res, 400, { error: 'По карточке уже идёт сделка' });
-  if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
-
-  const seller = db.users[g.owner];
-  if (!seller || !seller.requisites) return send(res, 400, { error: 'У продавца нет реквизитов' });
-
-  const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
-  const deal = {
-    id: uid(), kind: 'gift', giftId: g.id,
-    username: (t.name || g.type) + ' №' + g.num,
-    seller: seller.id, buyer: user.id,
-    price: g.price, status: 'pay',
-    createdAt: now(), requisites: seller.requisites
-  };
-  db.deals[deal.id] = deal;
-  g.frozen = deal.id;
-  save();
-
-  serviceMessage(seller.id, 'Покупатель хочет забрать вашу карточку «' + deal.username + '» за ' + g.price + ' ₽. Ожидайте перевод.');
-  push(seller.id, { type: 'state' });
-  push(user.id, { type: 'state' });
-  marketChanged();
-  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
-});
-
-route('POST', '/api/gifts/list', async (req, res, body, user) => {
-  grantDevCoin(user);
-  send(res, 200, { gifts: myGifts(user.id) });
-});
-
-/* ===== PUSH-УВЕДОМЛЕНИЯ ===== */
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'BGA17iH6l25CJBuj94BkyOxiSjqU9Y3DMSTe-yrCnYBkQ6zWVngCz_oRu53O7tNNFknpLfU5NmLYpSvHCXYDCLs';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'vOrmFqu0vvr-cYlc_MQPqu7dn-D3zul3HCvwnFSlO7I';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:newchat@example.com';
-
-function b64url(buf) {
-  return Buffer.from(buf).toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function vapidJwt(audience) {
-  const header = b64url(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
-  const payload = b64url(JSON.stringify({
-    aud: audience,
-    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
-    sub: VAPID_SUBJECT
-  }));
-  const data = header + '.' + payload;
-  const key = crypto.createPrivateKey({
-    key: { kty: 'EC', crv: 'P-256', d: VAPID_PRIVATE,
-           x: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(1, 33)),
-           y: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(33, 65)) },
-    format: 'jwk'
-  });
-  const der = crypto.sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' });
-  return data + '.' + b64url(der);
-}
-
-function pushWeb(sub, ttl) {
-  return new Promise(resolve => {
-    try {
-      const https = require('https');
-      const { URL } = require('url');
-      const u = new URL(sub.endpoint);
-      const jwt = vapidJwt(u.origin);
-      const req = https.request({
-        hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
-        headers: {
-          'TTL': String(ttl || 3600),
-          'Content-Length': 0,
-          'Urgency': 'high',
-          'Authorization': 'vapid t=' + jwt + ', k=' + VAPID_PUBLIC
-        }
-      }, res => {
-        if (res.statusCode === 404 || res.statusCode === 410) sub.dead = true;
-        res.resume();
-        resolve(res.statusCode);
-      });
-      req.setTimeout(8000, () => { req.destroy(); resolve(0); });
-      req.on('error', () => resolve(0));
-      req.end();
-    } catch (e) { resolve(0); }
-  });
-}
-
-function notifyPush(userId) {
-  const u = db.users[userId];
-  if (!u || !u.pushSubs || !u.pushSubs.length) return;
-  if (isOnline(userId)) return;
-  for (const sub of u.pushSubs) {
-    if (sub.dead) continue;
-    pushWeb(sub, 3600);
-  }
-  u.pushSubs = u.pushSubs.filter(s => !s.dead);
-}
-
-route('POST', '/api/push/subscribe', async (req, res, body, user) => {
-  const sub = body.sub;
-  if (!sub || !sub.endpoint) return send(res, 400, { error: 'Нет подписки' });
-  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== sub.endpoint);
-  user.pushSubs.push({ endpoint: String(sub.endpoint).slice(0, 500), time: now() });
-  if (user.pushSubs.length > 5) user.pushSubs = user.pushSubs.slice(-5);
-  save();
-  send(res, 200, { ok: true });
-});
-
-route('POST', '/api/push/unsubscribe', async (req, res, body, user) => {
-  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== body.endpoint);
-  save();
-  send(res, 200, { ok: true });
-});
-
-route('POST', '/api/push/peek', async (req, res, body, user) => {
-  let best = null;
-  for (const c of Object.values(db.chats)) {
-    if (!c.members.includes(user.id)) continue;
-    const readAt = (user.reads || {})[c.id] || 0;
-    for (const m of c.msgs) {
-      if (m.from === user.id || m.deleted || m.time <= readAt) continue;
-      if (!best || m.time > best.time) {
-        const author = db.users[m.from];
-        best = {
-          time: m.time,
-          chatId: c.id,
-          name: c.service ? 'Newchat' : ((author && author.name) || 'Сообщение'),
-          text: m.enc ? 'Зашифрованное сообщение'
-            : (m.text || (m.media ? 'Вложение' : '')).slice(0, 120)
-        };
-      }
+    if (pid) {
+      serviceMessage(pid, 'Секретный чат выключен.');
+      push(pid, { type: 'state' });
     }
-  }
-  send(res, 200, { msg: best });
-});
-
-const HELP_TOPICS = [
-  { t: 'биржа-продажа', k: ['продать', 'выставить', 'продажа', 'цена', 'лот', 'сколько стоит'],
-    a: 'Продать юзернейм: вкладка «Биржа» → «Мои» → «Юзернеймы» → кнопка «Продать» → укажите цену. Карточку продать так же, но в подвкладке «Карточки». Нужен привязанный телефон и реквизиты для получения денег — иначе покупателю некуда переводить.' },
-  { t: 'биржа-покупка', k: ['купить', 'покупка', 'приобрести', 'каталог', 'взять'],
-    a: 'Купить: «Биржа» → «Каталог». Сверху фильтры: всё, юзернеймы, карточки, и сортировка по цене или редкости. Нажимаете лот → открывается сделка → переводите деньги продавцу по его реквизитам → отмечаете «Оплатил» → продавец подтверждает, и покупка ваша.' },
-  { t: 'сделка', k: ['сделк', 'перевод', 'оплат', 'реквизит', 'деньги', 'не пришл', 'обманул на бирже'],
-    a: 'Сделки видно во вкладке «Сделки». Порядок: покупатель переводит по реквизитам продавца и жмёт «Оплатил», продавец получает деньги и жмёт «Подтвердить» — лот переходит покупателю. Если продавец пропал, через 7 дней передача происходит сама. Если обманули — откройте спор в сделке или подайте жалобу «Скам».' },
-  { t: 'жалоба', k: ['скам', 'докс', 'жалоб', 'обман', 'мошенн', 'полиц', 'угроз', 'слил', 'протокол', 'заявлен',
-        'кинул', 'развел', 'развёл', 'украл', 'не отдал', 'забрал деньги', 'шантаж', 'вымога'],
-    a: 'Жалоба: откройте чат → меню «⋮» → «Пожаловаться» → «Скам» или «Докс». Соберём протокол переписки со всеми удалёнными сообщениями и данными аккаунта, откроется ссылкой прямо в приложении — сохраняете в PDF через «Поделиться → Печать». Внутри инструкция, куда подать заявление. Телефон нарушителя в протоколе скрыт: полные данные администрация отдаёт только по запросу полиции по номеру протокола. После жалобы 2 суток нельзя подавать новые и закрыта биржа.' },
-  { t: 'секретный', k: ['секрет', 'шифр', 'приватн', 'e2e', 'ключ', 'прочитать сообщения'],
-    a: 'Секретный чат: меню чата → «Секретный чат». Сообщения шифруются прямо на телефонах, сервер видит только набор символов. Жалобы в таком чате недоступны — слепка не останется. Ключ живёт в памяти телефона: очистите данные приложения — старые секретные сообщения не восстановить. Если пишет «у собеседника нет ключа» — попросите его зайти в приложение, ключ создастся сам.' },
-  { t: 'звонки', k: ['звон', 'позвон', 'дозвон', 'трубк', 'соединя', 'громк', 'динамик', 'видеозвон', 'вызов'],
-    a: 'Звонок — кнопка трубки в шапке чата. В звонке есть видео, микрофон и громкая связь. Если бесконечно идёт «Соединение» — сеть не пропускает: выключите VPN или перейдите на Wi-Fi. Через 25 секунд приложение само скажет об этом. Рингтон меняется в «Настройки» → «Внешний вид» → «Рингтон звонка».' },
-  { t: 'голосовые', k: ['голосов', 'микрофон', 'кружок', 'кружк', 'записать', 'видеосообщ'],
-    a: 'Голосовое: зажмите микрофон, отпустите — уйдёт. Свайп вверх закрепляет запись, тогда палец можно убрать и отправить стрелкой. Кружок: короткий тап по микрофону переключает его в режим кружка, дальше так же зажимаете. До 60 секунд.' },
-  { t: 'медиа', k: ['фото', 'видео', 'файл', 'скрепк', 'картинк', 'документ', 'хранят', 'пропал', 'исчезл', 'удалились'],
-    a: 'Фото и видео — кнопка галереи, любые файлы — скрепка. До 10 МБ на файл. Видео, кружки и файлы хранятся 7 дней, потом удаляются, чтобы не забивать базу. Фото, текст и голосовые остаются навсегда.' },
-  { t: 'оформление', k: ['обои', 'фон', 'тема', 'тёмн', 'темн', 'шрифт', 'внешн', 'цвет', 'обложк', 'аватар',
-        'ночн', 'светл', 'оформлен', 'дизайн', 'вид'],
-    a: 'Обои чата: меню чата → «Обои чата», можно поставить себе или предложить обоим — собеседник подтвердит. Шрифт, тёмная тема, обложка профиля, эффекты и звуки — в «Настройки» → «Внешний вид». Аватар меняется тапом по нему в профиле.' },
-  { t: 'музыка', k: ['музык', 'трек', 'песн', 'плеер', 'mp3', 'слушать'],
-    a: 'Музыка в профиле: «Настройки» → «Внешний вид» → «Музыка в профиле» → «Выбрать трек». До 12 МБ. Трек виден всем, кто откроет ваш профиль: можно послушать, замедлить или ускорить, поставить на повтор и скачать. В режиме суперанонимности музыка скрыта.' },
-  { t: 'премиум', k: ['премиум', 'подписк', 'platinum', 'плати', 'звёзд'],
-    a: 'Премиум даёт сторис, больше слотов для юзернеймов и особые обложки профиля. Сейчас выдаётся вручную командой — напишите разработчику, тапнув плашку DEV рядом с его именем.' },
-  { t: 'карточки', k: ['карточк', 'nft', 'коллекц', 'devcoin', 'редкость', 'монет', 'подарок'],
-    a: 'Коллекционные карточки нельзя купить за деньги — их выдают за события, приглашения и заслуги. Они лежат в профиле, тап открывает карточку: там номер, тираж, редкость и рыночная цена, если такие уже продавали. Перепродать можно на бирже: «Мои» → «Карточки» → «Продать». Тираж у каждой ограничен, новые не выпускаются.' },
-  { t: 'юзернеймы', k: ['юзернейм', 'ник', 'имя', 'занять', 'слот', 'сменить'],
-    a: 'Юзернеймы — «Биржа» → «Мои». Свободный можно занять кнопкой «Занять юзернейм». Основной помечен «осн.» — его тоже можно продать или удалить, но только если есть запасной: он станет новым основным. Слотов по умолчанию 3, с премиумом больше.' },
-  { t: 'каналы', k: ['канал', 'бот', 'создать канал', 'подписч', 'токен'],
-    a: 'Канал и бота создаёте кнопкой «плюс» на вкладке «Чаты». В канале пишет только владелец. Боту выдаётся токен — подключаете к нему свою программу, как в телеге.' },
-  { t: 'аккаунт', k: ['выйти', 'выход', 'удалить аккаунт', 'сменить телефон', 'привязать', 'вход', 'войти'],
-    a: 'Вход по Telegram или по номеру. Если вошли по почте, телефон привязывается в профиле — без него закрыта биржа. Выйти: «Настройки» → «Выйти», сессия удаляется на сервере. Удаление аккаунта целиком — через обращение к разработчику.' },
-  { t: 'уведомления', k: ['уведомлен', 'звук сообщ', 'рингтон', 'не приходят', 'тишин', 'беззвучн'],
-    a: 'Звуки настраиваются в «Настройки» → «Внешний вид»: рингтон звонка, звук уведомлений, можно загрузить свои mp3 — рингтон до 3 минут, звук сообщения до 20 секунд. Уведомления при закрытом приложении работают, только если открыть сайт в Chrome и добавить на главный экран; в APK они недоступны.' },
-  { t: 'приватность', k: ['анонимн', 'скрыть', 'приватност', 'заблокир', 'блок', 'видно телефон'],
-    a: 'Суперанонимность включается в «Настройках»: вас не найдут поиском, музыка скрывается. Телефон другим людям не показывается никогда — только вам в своём профиле. Заблокировать собеседника можно в меню чата, тогда он не сможет писать.' },
-  { t: 'автоудаление', k: ['автоудален', 'исчеза', 'таймер', 'удалить сообщ', 'очистить истор'],
-    a: 'Автоудаление: меню чата → «Автоудаление», по кругу выкл → 1 час → 24 часа. Сообщения стираются сами у обоих. «Очистить историю» убирает переписку только у вас. Своё сообщение удаляется долгим нажатием на нём.' },
-  { t: 'проблемы', k: ['не работает', 'виснет', 'ошибк', 'баг', 'лаг', 'не отправ', 'нет связи', 'долго',
-        'тормоз', 'зависа', 'глюч', 'медленн', 'не грузит', 'белый экран', 'перезагру'],
-    a: 'Если пишет «Сервер просыпается» — подождите до минуты: бесплатный сервер засыпает без нагрузки, приложение само повторит запрос. Если что-то не обновилось, потяните экран или перезайдите во вкладку. Обновление приложения: «Настройки» → «Проверить обновления». Не помогло — напишите разработчику через плашку DEV.' },
-  { t: 'разработчик', k: ['разработчик', 'написать вам', 'связаться', 'поддержк', 'команд', 'админ', 'помощь'],
-    a: 'Написать команде: тапните оранжевую плашку DEV или голубую CO-DEV рядом с именем разработчика — откроется меню с темами: скам, докс, угрозы, ошибка в приложении. Выбираете тему, и сразу открывается чат с ним.' }
-];
-
-/* Простое сопоставление: считаем совпавшие слова и берём лучшую тему.
-   Работает на сервере, без внешних сервисов — бесплатно. */
-function findTopic(q) {
-  /* Сравниваем по началу слов, иначе «вклЮЧИТь» ловится на ключ «ключ» */
-  const words = q.split(/\s+/).filter(Boolean);
-  let best = null, bestScore = 0;
-  for (const t of HELP_TOPICS) {
-    let score = 0;
-    for (const key of t.k) {
-      const parts = key.split(' ');
-      if (parts.length > 1) {
-        if (q.includes(key)) score += 4;
-        continue;
-      }
-      for (const w of words) {
-        if (w.startsWith(key) || key.startsWith(w) && w.length >= 4) {
-          score += key.length > 5 ? 3 : 2;
-          break;
-        }
-      }
-    }
-    if (score > bestScore) { bestScore = score; best = t; }
-  }
-  return { best, score: bestScore };
-}
-
-route('POST', '/api/help/ask', async (req, res, body, user) => {
-  const raw = String(body.q || '').toLowerCase().slice(0, 300);
-  if (!raw) return send(res, 400, { error: 'Пустой вопрос' });
-  const q = raw.replace(/[^а-яёa-z0-9 ]/gi, ' ');
-
-  const { best, score } = findTopic(q);
-  if (best && score >= 2) {
-    return send(res, 200, { answer: best.a });
+    return send(res, 200, { secret: false, chats: userChats(user.id) });
   }
 
-  /* Не поняли точно — отвечаем осмысленно, а не отпиской */
-  const hints = [];
-  if (/(как|где|что|куда|почему|зачем|можно|умеет)/.test(q)) {
-    const guesses = HELP_TOPICS
-      .map(t => ({ t, s: t.k.filter(w => q.split(/\s+/).some(x => x.startsWith(w.slice(0, 4)))).length }))
-      .filter(x => x.s > 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 2);
-    for (const g of guesses) hints.push(g.t.a);
-  }
-
-  if (hints.length) {
-    return send(res, 200, {
-      answer: 'Кажется, вопрос про это:\n\n' + hints.join('\n\n') +
-        '\n\nЕсли не угадал — спросите иначе или напишите разработчику через плашку DEV.'
-    });
-  }
-
-  send(res, 200, {
-    answer: 'Не нашёл точного ответа, но вот что я умею объяснить:\n\n' +
-      '• Биржа: как продать и купить юзернейм или карточку\n' +
-      '• Сделки: перевод, реквизиты, споры\n' +
-      '• Жалобы: скам, докс, протокол для полиции\n' +
-      '• Секретные чаты и шифрование\n' +
-      '• Звонки, голосовые, кружки\n' +
-      '• Фото, видео, файлы и сроки хранения\n' +
-      '• Обои, шрифты, тёмная тема, музыка в профиле\n' +
-      '• Премиум, каналы, боты, юзернеймы\n' +
-      '• Уведомления и звуки\n\n' +
-      'Спросите про любое из этого своими словами. Если вопрос не про приложение — напишите разработчику: тапните плашку DEV рядом с его именем.'
-  });
-});
-
-route('POST', '/api/profile/sound', async (req, res, body, user) => {
-  /* Сам звук отдаём отдельно и только когда он нужен */
-  const kind = body.kind === 'msg' ? 'msgSound' : 'ringtone';
-  const snd = user[kind];
-  send(res, 200, { data: snd ? snd.data : '', name: snd ? snd.name : '' });
-});
-
-route('POST', '/api/profile/style', async (req, res, body, user) => {
-  /* Оформление профиля: обложка и подпись. Часть — только с премиумом. */
-  if (body.ringtone !== undefined) {
-    const r = body.ringtone;
-    if (!r) { user.ringtone = null; }
-    else {
-      const data = String(r.data || '');
-      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
-      if (data.length > 4200000) return send(res, 400, { error: 'Рингтон больше 3 МБ — возьмите короче' });
-      user.ringtone = { data, name: String(r.name || 'Свой рингтон').replace(/\.[a-z0-9]+$/i, '').slice(0, 50) };
-    }
-  }
-  if (body.msgSound !== undefined) {
-    const m = body.msgSound;
-    if (!m) { user.msgSound = null; }
-    else {
-      const data = String(m.data || '');
-      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
-      if (data.length > 700000) return send(res, 400, { error: 'Звук сообщения больше 500 КБ — возьмите короче' });
-      user.msgSound = { data, name: String(m.name || 'Свой звук').replace(/\.[a-z0-9]+$/i, '').slice(0, 50) };
-    }
-  }
-  if (body.music !== undefined) {
-    const m = body.music;
-    if (!m) { user.music = null; }
-    else {
-      const data = String(m.data || '');
-      if (!/^data:audio\/[a-z0-9.+-]+;base64,/i.test(data)) return send(res, 400, { error: 'Нужен музыкальный файл' });
-      if (data.length > MUSIC_MB * 1.37 * 1024 * 1024) {
-        return send(res, 400, { error: 'Трек больше ' + MUSIC_MB + ' МБ' });
-      }
-      user.music = {
-        data,
-        name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60),
-        size: Math.round(data.length * 0.75)
-      };
-    }
-  }
-  if (body.coverImg !== undefined) {
-    /* Своя обложка из галереи — премиум */
-    const img = String(body.coverImg || '');
-    if (!img) { user.coverImg = null; }
-    else {
-      if (!isPremium(user)) return send(res, 403, { error: 'Своя обложка доступна с премиумом' });
-      if (!/^data:image\/(jpeg|png|webp);base64,/.test(img) || img.length > 900000) {
-        return send(res, 400, { error: 'Картинка не подходит: до 600 КБ' });
-      }
-      user.coverImg = img;
-    }
-  }
-  if (body.cover !== undefined) {
-    const n = Math.max(0, Math.min(11, Number(body.cover) || 0));
-    if (n > 5 && !isPremium(user)) return send(res, 403, { error: 'Эта обложка доступна с премиумом' });
-    user.cover = n;
-    user.coverImg = null;
-  }
-  if (body.bio !== undefined) {
-    user.bio = String(body.bio || '').slice(0, 140);
-  }
-  if (body.icon !== undefined) {
-    if (!isPremium(user)) return send(res, 403, { error: 'Смена иконки доступна с премиумом' });
-    user.icon = String(body.icon || '').slice(0, 20);
-  }
+  /* Включить — только с согласия второго: иначе доксеры прятались бы
+     за шифрованием, чтобы на них нельзя было пожаловаться */
+  if (chat.secret) return send(res, 200, { secret: true, chats: userChats(user.id) });
+  chat.secretOffer = { from: user.id, time: now() };
   save();
-  send(res, 200, { state: fullState(user) });
-});
-
-route('POST', '/api/profile/settings', async (req, res, body, user) => {
-  if (typeof body.anon === 'boolean') user.anon = body.anon;
-  save();
-  send(res, 200, { anon: !!user.anon });
-});
-
-route('POST', '/api/users/block', async (req, res, body, user) => {
-  const target = db.users[String(body.userId || '')];
-  if (!target || target.id === user.id) return send(res, 404, { error: 'Пользователь не найден' });
-  user.blocked = user.blocked || {};
-  if (body.on) user.blocked[target.id] = true;
-  else delete user.blocked[target.id];
-  save();
-  send(res, 200, { blocked: !!user.blocked[target.id], chats: userChats(user.id) });
-});
-
-route('POST', '/api/chats/delete', async (req, res, body, user) => {
-  const chat = db.chats[String(body.chatId || '')];
-  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  if (chat.service) return send(res, 400, { error: 'Служебный чат удалить нельзя' });
-  if (chat.type === 'channel') return send(res, 400, { error: 'Канал удаляется в его меню' });
-  /* Скрываем у себя; копия остаётся на сервере — жалобы «Докс» и «Скам» работают как раньше */
-  chat.hiddenFor = chat.hiddenFor || [];
-  if (!chat.hiddenFor.includes(user.id)) chat.hiddenFor.push(user.id);
-  chat.clearedAt = chat.clearedAt || {};
-  chat.clearedAt[user.id] = now(); /* при возврате чат будет чистым */
-  save();
-  send(res, 200, { chats: userChats(user.id) });
-});
-
-route('POST', '/api/chats/clear', async (req, res, body, user) => {
-  const chat = db.chats[String(body.chatId || '')];
-  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  chat.clearedAt = chat.clearedAt || {};
-  chat.clearedAt[user.id] = now();
-  save();
-  send(res, 200, { chats: userChats(user.id) });
-});
-
-route('POST', '/api/channels/delete', async (req, res, body, user) => {
-  const chat = db.chats[String(body.chatId || '')];
-  if (!chat || chat.type !== 'channel') return send(res, 404, { error: 'Канал не найден' });
-  if (chat.owner !== user.id) return send(res, 403, { error: 'Удалить канал может только владелец' });
-
-  const members = chat.members.slice();
-  if (chat.uname && db.usernames[chat.uname] && db.usernames[chat.uname].channel === chat.id) {
-    delete db.usernames[chat.uname]; /* юзернейм канала освобождается */
-  }
-  delete db.chats[chat.id];
-  save();
-  for (const m of members) {
-    if (m !== user.id) {
-      serviceMessage(m, `Канал «${chat.title}» удалён владельцем.`);
-      push(m, { type: 'state' });
-    }
-  }
-  send(res, 200, { chats: userChats(user.id) });
-});
-
-route('POST', '/api/chats/ttl', async (req, res, body, user) => {
-  const chat = db.chats[String(body.chatId || '')];
-  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
-  if (chat.service || chat.type === 'channel') return send(res, 400, { error: 'Только для личных чатов' });
-  const hours = [0, 1, 24].includes(Number(body.hours)) ? Number(body.hours) : 0;
-  chat.ttl = hours ? hours * 3600e3 : 0;
-  save();
-  const label = hours === 0 ? 'выключено' : (hours === 1 ? '1 час' : '24 часа');
-  const pid = chat.members.find(m => m !== user.id);
   if (pid) {
-    serviceMessage(pid, `Собеседник изменил автоудаление сообщений в вашем чате: ${label}.`);
+    serviceMessage(pid, (user.name || 'Собеседник') + ' предлагает включить секретный чат. Сообщения будут шифроваться на устройствах, но пожаловаться на скам или докс в таком чате станет невозможно. Откройте меню чата, чтобы принять или отклонить.');
     push(pid, { type: 'state' });
   }
-  send(res, 200, { ttl: chat.ttl, chats: userChats(user.id) });
+  send(res, 200, { offered: true, chats: userChats(user.id) });
+});
+
+route('POST', '/api/chats/secret/answer', async (req, res, body, user) => {
+  const chat = db.chats[String(body.chatId || '')];
+  if (!chat || !chat.members.includes(user.id)) return send(res, 404, { error: 'Чат не найден' });
+  if (!chat.secretOffer || chat.secretOffer.from === user.id) return send(res, 400, { error: 'Нет предложения' });
+  const who = db.users[chat.secretOffer.from];
+  if (body.accept) {
+    chat.secret = true;
+    if (who) {
+      serviceMessage(who.id, (user.name || 'Собеседник') + ' согласился: секретный чат включён. Жалобы в этом чате недоступны обоим.');
+      push(who.id, { type: 'state' });
+    }
+    serviceMessage(user.id, 'Секретный чат включён. Сообщения шифруются на устройствах.');
+  } else if (who) {
+    serviceMessage(who.id, (user.name || 'Собеседник') + ' отклонил секретный чат.');
+    push(who.id, { type: 'state' });
+  }
+  chat.secretOffer = null;
+  save();
+  send(res, 200, { chats: userChats(user.id) });
 });
 
 route('POST', '/api/chats/read', async (req, res, body, user) => {
@@ -3483,6 +2922,274 @@ const OPEN_ROUTES = [
   'GET /api/config',
   'GET /api/health'
 ];
+
+
+/* ===== PUSH-УВЕДОМЛЕНИЯ ===== */
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'BGA17iH6l25CJBuj94BkyOxiSjqU9Y3DMSTe-yrCnYBkQ6zWVngCz_oRu53O7tNNFknpLfU5NmLYpSvHCXYDCLs';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'vOrmFqu0vvr-cYlc_MQPqu7dn-D3zul3HCvwnFSlO7I';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:newchat@example.com';
+
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function vapidJwt(audience) {
+  const header = b64url(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  const payload = b64url(JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: VAPID_SUBJECT }));
+  const data = header + '.' + payload;
+  const key = crypto.createPrivateKey({
+    key: { kty: 'EC', crv: 'P-256', d: VAPID_PRIVATE,
+           x: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(1, 33)),
+           y: b64url(Buffer.from(VAPID_PUBLIC, 'base64url').slice(33, 65)) },
+    format: 'jwk'
+  });
+  return data + '.' + b64url(crypto.sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' }));
+}
+function pushWeb(sub, ttl) {
+  return new Promise(resolve => {
+    try {
+      const https = require('https');
+      const { URL } = require('url');
+      const u = new URL(sub.endpoint);
+      const req = https.request({
+        hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+        headers: { 'TTL': String(ttl || 3600), 'Content-Length': 0, 'Urgency': 'high',
+                   'Authorization': 'vapid t=' + vapidJwt(u.origin) + ', k=' + VAPID_PUBLIC }
+      }, res => {
+        if (res.statusCode === 404 || res.statusCode === 410) sub.dead = true;
+        res.resume(); resolve(res.statusCode);
+      });
+      req.setTimeout(8000, () => { req.destroy(); resolve(0); });
+      req.on('error', () => resolve(0));
+      req.end();
+    } catch (e) { resolve(0); }
+  });
+}
+function notifyPush(userId) {
+  const u = db.users[userId];
+  if (!u || !u.pushSubs || !u.pushSubs.length) return;
+  if (isOnline(userId)) return;
+  for (const sub of u.pushSubs) if (!sub.dead) pushWeb(sub, 3600);
+  u.pushSubs = u.pushSubs.filter(x => !x.dead);
+}
+
+/* Биржа изменилась — короткий сигнал, не чаще раза в 5 секунд */
+let lastMarketPing = 0;
+function marketChanged() {
+  if (now() - lastMarketPing < 5000) return;
+  lastMarketPing = now();
+  for (const u of Object.values(db.users)) {
+    if (u.isBot || !isOnline(u.id)) continue;
+    push(u.id, { type: 'market' });
+  }
+}
+
+/* ===== КОЛЛЕКЦИОННЫЕ КАРТОЧКИ ===== */
+const GIFT_TYPES = {
+  aegis: {
+    name: 'Aegis', total: 50, rarity: 'Эпическая', rarityNum: 4,
+    desc: 'Щит Newchat — награда первым, кто настроил защиту своего аккаунта. Отчеканено 50 штук, больше не будет.',
+    quest: true
+  },
+  devcoin: {
+    name: 'DevCoin', total: 2, rarity: 'Легендарная', rarityNum: 5,
+    desc: 'Монета создателей Newchat. Отчеканено две — по числу тех, кто писал этот мессенджер с нуля.',
+    devOnly: true
+  }
+};
+
+function myGifts(userId) {
+  return (db.gifts || []).filter(g => g.owner === userId).map(g => {
+    const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+    const sales = (db.giftSales || []).filter(s => s.type === g.type);
+    const last = sales.length ? sales[sales.length - 1] : null;
+    return {
+      id: g.id, type: g.type, num: g.num,
+      forSale: !!g.forSale, price: g.price || 0, frozen: !!g.frozen,
+      name: t.name || g.type, total: t.total || 0,
+      rarity: t.rarity || '', rarityNum: t.rarityNum || 1,
+      desc: t.desc || '', issued: g.time,
+      lastPrice: last ? last.price : 0,
+      lastSaleAt: last ? last.time : 0,
+      salesCount: sales.length
+    };
+  });
+}
+
+function grantDevCoin(user) {
+  db.gifts = db.gifts || [];
+  let changed = false;
+  const devs = Object.values(db.users).filter(u => !u.isBot && (isDev(u) || isCodev(u)));
+  for (const d of devs) {
+    if (db.gifts.some(g => g.type === 'devcoin' && g.owner === d.id)) continue;
+    const minted = db.gifts.filter(g => g.type === 'devcoin').length;
+    if (minted >= GIFT_TYPES.devcoin.total) break;
+    db.gifts.push({ id: uid(), type: 'devcoin', num: minted + 1, owner: d.id, time: now() });
+    changed = true;
+    serviceMessage(d.id, 'Вам выдана коллекционная монета DevCoin №' + (minted + 1) + ' из ' + GIFT_TYPES.devcoin.total + '. Она в вашем профиле.');
+    push(d.id, { type: 'state' });
+  }
+  if (changed) save();
+}
+
+/* Три задания на «Aegis» */
+function aegisQuests(user) {
+  const hasChat = Object.values(db.chats).some(c =>
+    !c.service && c.type !== 'channel' && c.members.includes(user.id) &&
+    c.msgs.some(m => m.from === user.id));
+  const hasSecret = Object.values(db.chats).some(c => c.members.includes(user.id) && c.secret);
+  return [
+    { id: 'profile', title: 'Оформите профиль', hint: 'Аватар и пара слов о себе', done: !!(user.photo && user.bio) },
+    { id: 'talk', title: 'Напишите кому-нибудь', hint: 'Хотя бы одно сообщение в личном чате', done: hasChat },
+    { id: 'secret', title: 'Включите секретный чат', hint: 'Меню чата → «Секретный чат», с согласия собеседника', done: hasSecret }
+  ];
+}
+
+const QUEST_MS = 60 * 60e3;
+
+function grantAegis(user) {
+  db.gifts = db.gifts || [];
+  if (db.gifts.some(g => g.type === 'aegis' && g.owner === user.id)) return false;
+  if (!user.questStart || now() - user.questStart > QUEST_MS) return false;
+  if (!aegisQuests(user).every(q => q.done)) return false;
+  const minted = db.gifts.filter(g => g.type === 'aegis').length;
+  if (minted >= GIFT_TYPES.aegis.total) return false;
+  db.gifts.push({ id: uid(), type: 'aegis', num: minted + 1, owner: user.id, time: now() });
+  save();
+  serviceMessage(user.id, 'Все задания выполнены! Вам вручён щит «Aegis» №' + (minted + 1) + ' из ' + GIFT_TYPES.aegis.total + '. Он в вашем профиле.');
+  push(user.id, { type: 'state' });
+  return true;
+}
+
+/* Анонимный номер команде: +0 и девять цифр */
+function ensureAnonPhone(user) {
+  if (!user || user.anonPhone) return;
+  if (!isDev(user) && !isCodev(user)) return;
+  let num;
+  do {
+    num = '0' + String(Math.floor(1000000000 + Math.random() * 8999999999));
+  } while (Object.values(db.users).some(u => u.anonPhone === num));
+  user.anonPhone = num;
+  save();
+  const pretty = '+0 ' + num.slice(1, 4) + ' ' + num.slice(4, 7) + '-' + num.slice(7, 9) + '-' + num.slice(9, 11);
+  serviceMessage(user.id, 'Вам выдан анонимный номер ' + pretty +
+    '. Настоящий телефон скрыт — другие видят только +0 ' + num.slice(1, 4) + ' •••-••-' + num.slice(-2) + '.');
+}
+
+route('POST', '/api/quests', async (req, res, body, user) => {
+  let minted = (db.gifts || []).filter(g => g.type === 'aegis').length;
+  let mine = (db.gifts || []).some(g => g.type === 'aegis' && g.owner === user.id);
+  const soldOut = minted >= GIFT_TYPES.aegis.total;
+  if (body.start && !user.questStart && !mine && !soldOut) { user.questStart = now(); save(); }
+  const got = grantAegis(user);
+  if (got) { minted = (db.gifts || []).filter(g => g.type === 'aegis').length; mine = true; }
+  const left = user.questStart ? Math.max(0, QUEST_MS - (now() - user.questStart)) : QUEST_MS;
+  send(res, 200, {
+    name: GIFT_TYPES.aegis.name, desc: GIFT_TYPES.aegis.desc, rarity: GIFT_TYPES.aegis.rarity,
+    quests: aegisQuests(user), have: mine, started: !!user.questStart,
+    msLeft: mine ? 0 : left, expired: !!user.questStart && left <= 0 && !mine,
+    minted, total: GIFT_TYPES.aegis.total, soldOut, justGot: got
+  });
+});
+
+route('POST', '/api/gifts/list', async (req, res, body, user) => {
+  grantDevCoin(user);
+  send(res, 200, { gifts: myGifts(user.id) });
+});
+
+route('POST', '/api/gifts/sell', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'Карточка в сделке' });
+  if (!user.phone) return send(res, 403, { error: 'Для продажи привяжите телефон в профиле' });
+  if (!user.requisites) return send(res, 400, { error: 'Сначала укажите реквизиты для получения денег' });
+  const price = Math.round(Number(body.price) || 0);
+  if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
+  if (price > 5000000) return send(res, 400, { error: 'Слишком большая цена' });
+  g.forSale = true; g.price = price;
+  save(); marketChanged();
+  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
+});
+
+route('POST', '/api/gifts/unsell', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || g.owner !== user.id) return send(res, 403, { error: 'Это не ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'Идёт сделка — снять нельзя' });
+  g.forSale = false; g.price = 0;
+  save(); marketChanged();
+  send(res, 200, { gifts: myGifts(user.id), giftMarket: giftMarket(user.id) });
+});
+
+route('POST', '/api/gifts/buy', async (req, res, body, user) => {
+  const g = (db.gifts || []).find(x => x.id === String(body.id || ''));
+  if (!g || !g.forSale) return send(res, 404, { error: 'Карточка не продаётся' });
+  if (g.owner === user.id) return send(res, 400, { error: 'Это ваша карточка' });
+  if (g.frozen) return send(res, 400, { error: 'По карточке уже идёт сделка' });
+  if (!user.phone) return send(res, 403, { error: 'Для покупки привяжите телефон в профиле' });
+  const seller = db.users[g.owner];
+  if (!seller || !seller.requisites) return send(res, 400, { error: 'У продавца нет реквизитов' });
+  const t = GIFT_TYPES[g.type] || (db.giftTypes || {})[g.type] || {};
+  const deal = {
+    id: uid(), kind: 'gift', giftId: g.id,
+    username: (t.name || g.type) + ' №' + g.num,
+    seller: seller.id, buyer: user.id, price: g.price, status: 'pay',
+    createdAt: now(), requisites: seller.requisites
+  };
+  db.deals[deal.id] = deal;
+  g.frozen = deal.id;
+  save();
+  serviceMessage(seller.id, 'Покупатель хочет забрать вашу карточку «' + deal.username + '» за ' + g.price + ' ₽. Ожидайте перевод.');
+  push(seller.id, { type: 'state' });
+  push(user.id, { type: 'state' });
+  marketChanged();
+  send(res, 200, { deal: dealView(deal, user.id), state: fullState(user) });
+});
+
+route('GET', '/api/market', async (req, res, body, user) => {
+  send(res, 200, {
+    market: marketList(user.id),
+    giftMarket: giftMarket(user.id),
+    gifts: myGifts(user.id),
+    usernames: myUsernames(user.id),
+    deals: Object.values(db.deals)
+      .filter(d => d.seller === user.id || d.buyer === user.id)
+      .sort((a, b) => b.createdAt - a.createdAt).slice(0, 20)
+      .map(d => dealView(d, user.id))
+  });
+});
+
+route('POST', '/api/push/subscribe', async (req, res, body, user) => {
+  const sub = body.sub;
+  if (!sub || !sub.endpoint) return send(res, 400, { error: 'Нет подписки' });
+  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== sub.endpoint);
+  user.pushSubs.push({ endpoint: String(sub.endpoint).slice(0, 500), time: now() });
+  if (user.pushSubs.length > 5) user.pushSubs = user.pushSubs.slice(-5);
+  save();
+  send(res, 200, { ok: true });
+});
+
+route('POST', '/api/push/unsubscribe', async (req, res, body, user) => {
+  user.pushSubs = (user.pushSubs || []).filter(s => s.endpoint !== body.endpoint);
+  save();
+  send(res, 200, { ok: true });
+});
+
+route('POST', '/api/push/peek', async (req, res, body, user) => {
+  let best = null;
+  for (const c of Object.values(db.chats)) {
+    if (!c.members.includes(user.id)) continue;
+    const readAt = (user.reads || {})[c.id] || 0;
+    for (const m of c.msgs) {
+      if (m.from === user.id || m.deleted || m.time <= readAt) continue;
+      if (!best || m.time > best.time) {
+        const author = db.users[m.from];
+        best = { time: m.time, chatId: c.id,
+          name: c.service ? 'Newchat' : ((author && author.name) || 'Сообщение'),
+          text: m.enc ? 'Зашифрованное сообщение' : (m.text || (m.media ? 'Вложение' : '')).slice(0, 120) };
+      }
+    }
+  }
+  send(res, 200, { msg: best });
+});
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {

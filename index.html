@@ -188,6 +188,28 @@ body,.glass-card,.tabbar,.sheet,.msg.in,.composer input,.field,.search-pill{
 .coin .face svg{width:56%;height:56%;filter:drop-shadow(0 3px 8px rgba(30,20,90,.4))}
 .coin .face b{color:#fff;font-size:1.5rem;letter-spacing:1px;text-shadow:0 3px 10px rgba(30,20,90,.45)}
 .coin-hint{text-align:center;font-size:.72rem;color:var(--ink-2);margin-top:10px}
+/* Промо новой карточки над списком чатов */
+.quest-bar{margin:10px 16px 6px;padding:12px 14px;border-radius:18px;cursor:pointer;
+  background:linear-gradient(135deg,#149655,#2FC47E 55%,#66E3A8);color:#fff;
+  display:flex;align-items:center;gap:12px;overflow:hidden;position:relative;
+  box-shadow:0 10px 26px rgba(20,150,85,.32)}
+.quest-bar::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(120deg,transparent 34%,rgba(255,255,255,.32) 50%,transparent 66%);
+  background-size:230% 100%;animation:sheen 3.6s linear infinite}
+.quest-ic{width:52px;height:52px;flex:none;border-radius:14px;
+  background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.42),rgba(255,255,255,.12));
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 12px rgba(0,0,0,.14)}
+.quest-ic svg{width:76%;height:76%;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28));
+  animation:questFloat 3.2s ease-in-out infinite}
+@keyframes questFloat{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-3px) rotate(-5deg)}}
+.quest-txt{flex:1;min-width:0}
+.quest-txt b{font-size:.88rem;display:block;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quest-txt i{font-style:normal;font-size:.72rem;opacity:.92;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quest-time{flex:none;font-weight:800;font-size:.76rem;font-variant-numeric:tabular-nums;
+  background:rgba(0,0,0,.2);padding:5px 10px;border-radius:10px;white-space:nowrap}
+.nft-mini.shield{background:none!important;box-shadow:none!important;border-radius:0}
+.nft-mini.shield svg{width:100%;height:100%;filter:drop-shadow(0 5px 12px rgba(90,70,220,.4))}
 .nft-card{background:linear-gradient(155deg,rgba(124,107,240,.22),rgba(124,107,240,.05));
   border:1px solid rgba(124,107,240,.32);border-radius:18px;padding:16px 8px 14px;text-align:center;cursor:pointer;
   transition:transform .16s,box-shadow .2s;position:relative;overflow:hidden;
@@ -908,8 +930,8 @@ body{
       Поиск людей, каналов и ботов
     </div>
     <div class="quest-bar" id="quest-bar" style="display:none" onclick="openQuests()">
-      <span class="quest-ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3l8 3.2v5.4c0 5.2-3.4 8.7-8 10.4-4.6-1.7-8-5.2-8-10.4V6.2L12 3z"/></svg></span>
-      <span style="flex:1;min-width:0"><b id="qb-title">Получите карточку Aegis</b><span id="qb-sub">три задания · осталось 50</span></span>
+      <span class="quest-ic" id="qb-ic"></span>
+      <span class="quest-txt"><b id="qb-title">Карточка «Aegis»</b><i id="qb-sub">три задания · свободно 50</i></span>
       <span class="quest-time" id="qb-time">60:00</span>
     </div>
     <div class="scroll" id="chat-list"></div>
@@ -2555,6 +2577,7 @@ function openPeer(){
   const avaBig='<div class="ava" style="'+avaStyle+'">'+(p.photo?'':esc((p.name||'?')[0].toUpperCase()))+'</div>';
   const check=p.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
   let sub=c.type==='channel'?(c.subs||1)+' подписчиков':(p.bot?'бот':fmtSeen(p));
+  const anonLine=p.anonPhone?'<div style="text-align:center;font-size:.8rem;color:var(--ink-2);padding:0 20px 4px" class="mono">'+esc(p.anonPhone)+'</div>':'';
   const bioLine=p.bio?'<div style="text-align:center;padding:2px 26px 8px;font-size:.86rem;color:var(--ink-2);line-height:1.45">'+esc(p.bio)+'</div>':'';
   let dossier='';
   if(!p.bot&&!p.channel&&typeof p.reportsOn==='number'){
@@ -2577,7 +2600,7 @@ function openPeer(){
     '<div style="margin-top:-59px;text-align:center">'+avaBig+'</div>'+
     '<div style="text-align:center;padding:12px 20px 2px"><b style="font-size:1.4rem">'+esc(p.name||'')+'</b>'+check+devChip(p)+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
     '<div style="text-align:center;color:var(--ink-2);font-size:.82rem;padding-bottom:4px" onclick="copyText(\'@'+esc(p.username||'')+'\');toast(\'Юзернейм скопирован\')">@'+esc(p.username||'')+' · '+esc(sub)+'</div>'+
-    bioLine+premLine(p)+peerMusicBlock(p)+peerShelf(p)+dossier+trustRow+
+    anonLine+bioLine+premLine(p)+peerMusicBlock(p)+peerShelf(p)+dossier+trustRow+
     '<div style="padding:12px 16px 18px;display:flex;flex-direction:column;gap:8px">'+
     (c.type==='dm'&&!p.bot?'<button class="btn ghost" style="margin:0" onclick="closeSheets();blockPeer()">'+(c.blocked?'Разблокировать':'Заблокировать')+'</button>':'')+
     (c.type==='dm'?'<button class="btn ghost" style="margin:0;color:var(--danger)" onclick="closeSheets();openSheet(\'sheet-report\')">Пожаловаться</button>':'')+
@@ -2603,7 +2626,7 @@ function openChatMenu(){
     (c.wpOffer?'<button class="report-opt" onclick="answerWp(true)" style="border-color:var(--accent)"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M5 13l4 4 10-10"/></svg></span><span><b>Принять общие обои</b><span>Собеседник предлагает — «'+(WP_NAMES[c.wpOffer.wp]||'без обоев')+'»</span></span></button>'+
      '<button class="report-opt" onclick="answerWp(false)"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="21" height="21"><path d="M6 6l12 12M18 6L6 18"/></svg></span><span><b>Отклонить обои</b></span></button>':'')+
     '<button class="report-opt'+(c.wp?' on':'')+'" onclick="openWallpapers()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg></span><span><b>Обои чата</b><span>'+(c.wp?(WP_NAMES[c.wp]||'своя картинка'):'по умолчанию')+'</span></span>'+(c.wp?'<span class="state">включены</span>':'')+'</button>'+
-    '<button class="report-opt'+(c.secret?' on':'')+'" onclick="toggleSecret()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span><span><b>Секретный чат</b><span>Шифрование на устройствах · жалобы недоступны</span></span>'+(c.secret?'<span class="state">вкл</span>':'')+'</button>'+
+    '<button class="report-opt'+(c.secret?' on':'')+'" onclick="toggleSecret()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span><span><b>Секретный чат</b><span>'+(c.secretPending?'ждём ответа собеседника':'Шифрование на устройствах · жалобы недоступны')+'</span></span>'+(c.secret?'<span class="state">вкл</span>':(c.secretPending?'<span class="state">ждём</span>':''))+'</button>'+
     '<button class="report-opt'+(c.ttl?' on':'')+'" onclick="cycleTtl()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span><span><b>Автоудаление</b><span>Сообщения будут стираться сами</span></span>'+(c.ttl?'<span class="state">'+(c.ttl===3600e3?'1 час':'24 часа')+'</span>':'')+'</button>'+
     '<button class="report-opt" onclick="clearChat()"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 6h16M6 6l1.5 14h9L18 6"/><path d="M10 11v5M14 11v5"/></svg></span><span><b>Очистить историю</b><span>Только у вас, собеседник всё видит</span></span></button>'+
     '<button class="report-opt" onclick="deleteChat()"><span class="ic" style="color:var(--danger)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="21" height="21"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></span><span><b>Удалить чат</b><span>Пропадёт у вас; копия для жалоб сохраняется</span></span></button>'+
@@ -4565,13 +4588,15 @@ async function loadQuests(start){
 function updateQuestBar(){
   const bar=document.getElementById('quest-bar');
   if(!bar||!questData)return;
+  const ic=document.getElementById('qb-ic');
+  if(ic&&!ic.innerHTML)ic.innerHTML=SHIELD_3D;
   const a=document.querySelector('.screen.active');
   const onChats=a&&a.id==='s-chats';
   const hide=questData.have||questData.soldOut||questData.expired||!onChats;
   bar.style.display=hide?'none':'flex';
   if(hide)return;
   const done=questData.quests.filter(q=>q.done).length;
-  document.getElementById('qb-title').textContent='Получите карточку «'+questData.name+'»';
+  document.getElementById('qb-title').textContent='Карточка «'+questData.name+'»';
   document.getElementById('qb-sub').textContent=questData.started
     ? done+' из '+questData.quests.length+' заданий · осталось '+(questData.total-questData.minted)+' из '+questData.total
     : 'три задания · свободно '+(questData.total-questData.minted)+' из '+questData.total;
