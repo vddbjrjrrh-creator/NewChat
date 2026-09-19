@@ -197,6 +197,7 @@ function ensureDbShape() {
   db.botTokens = db.botTokens || {};
   db.botUpdates = db.botUpdates || {};
   db.blacklist = db.blacklist || {};
+  db.reportBlocks = db.reportBlocks || {};
 }
 
 let saveTimer = null;
@@ -2063,14 +2064,43 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
   if (chat.secret) return send(res, 400, { error: 'В секретном чате сервер не хранит текст — протокол собрать невозможно' });
 
   /* Пауза после предыдущей жалобы — чтобы протокол не использовали
-     как способ читать удалённые сообщения */
+     как способ читать удалённые сообщения.
+     Раньше пауза висела на аккаунте, и её обходили за минуту: выйти,
+     зарегистрироваться на другую почту, подать жалобу снова. Теперь
+     жалоба требует привязанного телефона, а пауза общая для телефона
+     и для адреса, с которого пришли. */
   const onTeam = isDev(user) || isCodev(user);
-  if (!onTeam && user.reportBlockUntil && user.reportBlockUntil > now()) {
-    const hrs = Math.ceil((user.reportBlockUntil - now()) / 3600e3);
-    return send(res, 429, { error: 'Следующую жалобу можно подать через ' + hrs + ' ч. Ограничение защищает от злоупотреблений.' });
+  if (!onTeam && !user.phone) {
+    return send(res, 403, { error: 'Чтобы подать жалобу, привяжите телефон в профиле. Так протокол имеет силу, а анонимные жалобы отсекаются.' });
+  }
+  db.reportBlocks = db.reportBlocks || {};
+  const rbKeys = [];
+  if (user.phone) rbKeys.push('phone:' + user.phone);
+  const rbIp = clientIp(req);
+  if (rbIp) rbKeys.push('ip:' + rbIp);
+  if (!onTeam) {
+    for (const k of rbKeys) {
+      const until = db.reportBlocks[k] || 0;
+      if (until > now()) {
+        const hrs = Math.ceil((until - now()) / 3600e3);
+        return send(res, 429, { error: 'Следующую жалобу можно подать через ' + hrs + ' ч. Ограничение защищает от злоупотреблений.' });
+      }
+    }
+    if (user.reportBlockUntil && user.reportBlockUntil > now()) {
+      const hrs = Math.ceil((user.reportBlockUntil - now()) / 3600e3);
+      return send(res, 429, { error: 'Следующую жалобу можно подать через ' + hrs + ' ч. Ограничение защищает от злоупотреблений.' });
+    }
   }
 
   const peerId = chat.members.find(m => m !== user.id);
+  /* Одна жалоба на человека в неделю: иначе протокол становится
+     способом перечитывать чужую удалённую переписку раз за разом */
+  if (!isDev(user) && !isCodev(user)) {
+    const recent = db.reports.find(r => r.against === peerId && r.from === user.id && now() - r.time < 7 * 86400e3);
+    if (recent) {
+      return send(res, 429, { error: 'Жалоба на этого человека уже подана (протокол №' + recent.num + '). Повторная — через неделю.' });
+    }
+  }
   const peer = db.users[peerId] || {};
   if (isDev(peer) || isCodev(peer)) {
     return send(res, 400, { error: 'Это аккаунт команды Newchat — жалоба на него не имеет смысла. Напишите разработчику напрямую.' });
@@ -2096,7 +2126,15 @@ route('POST', '/api/reports/create', async (req, res, body, user) => {
 
   /* Двое суток без новых жалоб и без биржи. Команду это не касается:
      мы помогаем людям, которым угрожают прямо сейчас. */
-  if (!onTeam) user.reportBlockUntil = now() + 2 * 86400e3;
+  if (!onTeam) {
+    const until = now() + 2 * 86400e3;
+    user.reportBlockUntil = until;
+    for (const k of rbKeys) db.reportBlocks[k] = until;
+    /* Те же сутки распространяются на все аккаунты с этим телефоном */
+    for (const u of Object.values(db.users)) {
+      if (u.id !== user.id && user.phone && u.phone === user.phone) u.reportBlockUntil = until;
+    }
+  }
   save();
 
   const link = PUBLIC_URL + '/report/' + num + '?t=' + token;
@@ -2652,20 +2690,56 @@ route('POST', '/api/dev/user', async (req, res, body, user) => {
 
   const done = [];
   if (body.info) {
+    /* Полное досье владельцу сервиса. Данные и так лежат в его базе —
+       кнопка лишь избавляет от ручных запросов к Postgres.
+       Каждый просмотр пишется в журнал /api/dev/audit. */
+    const reportsOn = db.reports.filter(r => r.against === target.id);
+    const reportsBy = db.reports.filter(r => r.from === target.id);
+    const deals = Object.values(db.deals).filter(d => d.seller === target.id || d.buyer === target.id);
+    const bots = Object.values(db.users).filter(u => u.isBot && u.owner === target.id);
+    /* Вторые аккаунты. Телефон и почта — признак надёжный.
+       Общий адрес — слабый: домашний Wi-Fi и мобильный оператор дают
+       один адрес разным людям, поэтому идёт отдельной строкой. */
+    const sameId = Object.values(db.users).filter(u =>
+      u.id !== target.id && !u.isBot && (
+        (target.phone && u.phone === target.phone) ||
+        (target.email && u.email && String(u.email).toLowerCase() === String(target.email).toLowerCase())
+      )).map(u => '@' + (u.username || u.id));
+    const sameIp = Object.values(db.users).filter(u =>
+      u.id !== target.id && !u.isBot && !sameId.includes('@' + (u.username || u.id)) &&
+      (target.ips || []).some(ip => (u.ips || []).includes(ip))
+    ).map(u => '@' + (u.username || u.id));
+
     return send(res, 200, {
       info: {
         id: target.id,
         name: target.name,
-        phone: (target.phone || '').replace(/^(\d{3})\d+(\d{2})$/, '$1•••$2'),
+        phone: target.phone ? ('+7' + target.phone) : 'не привязан',
+        email: target.email || 'не указана',
+        telegramId: target.telegramId || target.tgId || null,
         trust: target.trust || 0,
         premium: isPremium(target),
         premiumUntil: target.premiumUntil || 0,
         banned: !!target.banned,
+        bannedAt: target.bannedAt || 0,
         anon: !!target.anon,
         invites: target.inviteCount || 0,
+        invitedBy: target.invitedBy ? ('@' + ((db.users[target.invitedBy] || {}).username || target.invitedBy)) : '',
         usernames: Object.entries(db.usernames).filter(([, v]) => v.owner === target.id && !v.channel).map(([un]) => '@' + un),
         createdAt: target.createdAt,
-        lastSeen: target.lastSeen || 0
+        lastSeen: target.lastSeen || 0,
+        ips: target.ips || [],
+        bio: target.bio || '',
+        reportsOn: reportsOn.length,
+        reportsOnNums: reportsOn.map(r => r.num),
+        reportsBy: reportsBy.length,
+        reportsByNums: reportsBy.map(r => r.num),
+        reportBlockUntil: target.reportBlockUntil || 0,
+        deals: deals.length,
+        dealsDone: deals.filter(d => d.status === 'done').length,
+        bots: bots.map(b => '@' + b.username),
+        requisites: target.requisites ? (target.requisites.kind + ' ' + target.requisites.value + (target.requisites.bank ? ' (' + target.requisites.bank + ')' : '')) : '',
+        sameId, sameIp
       }
     });
   }
@@ -3901,6 +3975,9 @@ setInterval(() => {
   const t = Date.now();
   for (const [ip, st] of ipStats) if (t - st.start > 600000) ipStats.delete(ip);
   for (const [ip, until] of ipBans) if (until < t) ipBans.delete(ip);
+  if (db.reportBlocks) {
+    for (const [k, until] of Object.entries(db.reportBlocks)) if (until < t) delete db.reportBlocks[k];
+  }
 }, 600000);
 
 const server = http.createServer(async (req, res) => {
@@ -3992,7 +4069,13 @@ const server = http.createServer(async (req, res) => {
     /* Дев-панель: роль + второй ключ из DEV_SECRET в заголовке X-Dev-Key.
        Украденного токена разработчика для неё больше недостаточно. */
     if (url.startsWith('/api/dev/')) {
-      if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+      if (!isDev(user)) {
+        /* Чужая попытка войти в дев-панель — сигнал, а не мелочь */
+        audit(user, req, url, { denied: 'не разработчик' });
+        alertOwner('Попытка войти в дев-панель: @' + (user.username || user.id) + ' (' + clientIp(req) + '), путь ' + url);
+        save();
+        return send(res, 403, { error: 'Только для разработчиков' });
+      }
       if (!DEV_SECRET) return send(res, 403, { error: 'Дев-панель выключена: на сервере не задан DEV_SECRET' });
       if (!safeEqual(req.headers['x-dev-key'], DEV_SECRET)) {
         devKeyFailed(req, user);

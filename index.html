@@ -1873,7 +1873,7 @@ try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.class
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 try{if(localStorage.getItem('newchat_lite')==='1')document.documentElement.classList.add('lite')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 58;
+const APP_VERSION = 60;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -3332,14 +3332,38 @@ async function devInfo(){
   try{
     const r=await api('/api/dev/user',{username,info:true});
     const i=r.info;
+    const d=t=>t?new Date(t).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
     const el=document.getElementById('dev-info');
     el.style.display='block';
-    el.textContent=
-      'Имя: '+i.name+'\nТелефон: '+i.phone+'\nДоверие: '+i.trust+'%\n'+
-      'Премиум: '+(i.premium?('до '+new Date(i.premiumUntil).toLocaleDateString('ru')):'нет')+'\n'+
-      'Бан: '+(i.banned?'ДА':'нет')+' · Аноним: '+(i.anon?'да':'нет')+'\n'+
-      'Приглашено: '+i.invites+'\nЮзернеймы: '+i.usernames.join(', ')+'\n'+
-      'Создан: '+new Date(i.createdAt).toLocaleDateString('ru')+' · Был: '+(i.lastSeen?new Date(i.lastSeen).toLocaleString('ru'):'—');
+    let t=
+      'КТО\n'+
+      'Имя: '+i.name+'\n'+
+      'Юзернеймы: '+(i.usernames.join(', ')||'—')+'\n'+
+      'ID: '+i.id+'\n'+
+      (i.bio?'О себе: '+i.bio+'\n':'')+
+      '\nКОНТАКТЫ\n'+
+      'Телефон: '+i.phone+'\n'+
+      'Почта: '+i.email+'\n'+
+      (i.telegramId?'Telegram ID: '+i.telegramId+'\n':'')+
+      (i.requisites?'Реквизиты: '+i.requisites+'\n':'')+
+      '\nАККАУНТ\n'+
+      'Создан: '+d(i.createdAt)+'\n'+
+      'Был в сети: '+d(i.lastSeen)+'\n'+
+      'Доверие: '+i.trust+'%\n'+
+      'Премиум: '+(i.premium?('да, до '+d(i.premiumUntil)):'нет')+'\n'+
+      'Приглашено друзей: '+i.invites+(i.invitedBy?' · пришёл по ссылке '+i.invitedBy:'')+'\n'+
+      'Статус: '+(i.banned?('ЗАБАНЕН '+d(i.bannedAt)):'активен')+(i.anon?' · анонимный номер':'')+'\n';
+    if(i.ips&&i.ips.length)t+='Адреса входа: '+i.ips.join(', ')+'\n';
+    t+='\nЖАЛОБЫ\n'+
+      'На него: '+i.reportsOn+(i.reportsOnNums.length?' (№ '+i.reportsOnNums.join(', №')+')':'')+'\n'+
+      'Подал сам: '+i.reportsBy+(i.reportsByNums.length?' (№ '+i.reportsByNums.join(', №')+')':'')+'\n';
+    if(i.reportBlockUntil>Date.now())t+='Биржа закрыта до: '+d(i.reportBlockUntil)+'\n';
+    t+='\nАКТИВНОСТЬ\n'+
+      'Сделок: '+i.deals+' (завершено '+i.dealsDone+')\n';
+    if(i.bots&&i.bots.length)t+='Боты: '+i.bots.join(', ')+'\n';
+    if(i.sameId&&i.sameId.length)t+='\n⚠ ТОТ ЖЕ ЧЕЛОВЕК (совпал телефон или почта):\n'+i.sameId.join(', ')+'\n';
+    if(i.sameIp&&i.sameIp.length)t+='\nВходили с того же адреса (может быть общий Wi-Fi):\n'+i.sameIp.join(', ')+'\n';
+    el.textContent=t;
   }catch(e){}
 }
 async function devStats(){
