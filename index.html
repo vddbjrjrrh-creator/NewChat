@@ -2,6 +2,12 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
+<!-- Политика безопасности контента. GitHub Pages не умеет HTTP-заголовки,
+     поэтому она здесь. Главное: скрипт может ходить только на наш сервер,
+     картинки и медиа — только свои и data/blob. Если внутри страницы всё же
+     выполнится чужой код, утащить данные наружу ему некуда. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' https://newchat-server1.onrender.com wss://newchat-server1.onrender.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Newchat</title>
 <link rel="manifest" href="./manifest.json">
@@ -1706,6 +1712,14 @@ body.story-open .chatty,body.story-open .chatty-bubble,body.story-open .quest-ba
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devGift()">Подарить юзернейм</button>
         <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurge()">Очистить вложения</button>
       </div>
+      <div class="w-section" style="margin-top:14px">Место в базе</div>
+      <div class="cur-row" style="flex-wrap:wrap">
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem" onclick="devStorage()">Что занимает место</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurgeOld()">Старше 30 дней</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurgeAll()">Все вложения</button>
+        <button class="cur-btn" style="font-family:'Manrope';font-size:.8rem;color:var(--danger)" onclick="devPurgeMusic()">Музыку профилей</button>
+      </div>
+      <div id="dev-storage" class="conv-preview" style="display:none;text-align:left;font-size:.78rem;white-space:pre-line"></div>
       <div id="dev-info" class="conv-preview" style="display:none;text-align:left;font-size:.78rem;white-space:pre-line"></div>
       <div class="w-section" style="margin-top:14px">Разбор жалоб</div>
       <button class="btn ghost" onclick="devReportList()">Последние жалобы</button>
@@ -1859,7 +1873,7 @@ try{if(localStorage.getItem('newchat_dark')==='1')document.documentElement.class
 try{document.documentElement.dataset.font=localStorage.getItem('newchat_font')||'manrope'}catch(e){}
 try{if(localStorage.getItem('newchat_lite')==='1')document.documentElement.classList.add('lite')}catch(e){}
 /* ВЕРСИЯ ПРИЛОЖЕНИЯ. Поднимай при каждом обновлении — все получат его сами. */
-const APP_VERSION = 55;
+const APP_VERSION = 58;
 
 /* Проверка обновлений: раз в 10 минут и при каждом возврате в приложение.
    Сравниваем свою версию с той, что лежит на сайте прямо сейчас. */
@@ -1934,7 +1948,44 @@ let ws=null;
 let sellUname='';
 
 function fmtTime(ts){return new Date(ts).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'})}
-function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
+/* Экранирование для вставки в разметку. Кавычки тоже: без этого строка
+   с кавычкой вырывалась из атрибута — так к нам и залезли. */
+function esc(s){return String(s==null?'':s).replace(/[&<>"'`]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[c]))}
+/* Картинка или медиа из базы допускается только как чистый data:/blob:-адрес.
+   Всё, что не похоже на него, превращается в пустую строку.
+   Хвост base64 проверяем посимвольно: на вложении в десяток мегабайт
+   регулярное выражение способно положить всю вкладку. */
+function isB64(s){
+  const n=s.length;
+  if(n<8)return false;
+  let end=n;
+  if(s.charCodeAt(end-1)===61)end--;
+  if(s.charCodeAt(end-1)===61)end--;
+  if(end<8)return false;
+  for(let i=0;i<end;i++){
+    const c=s.charCodeAt(i);
+    if(c>=65&&c<=90)continue;
+    if(c>=97&&c<=122)continue;
+    if(c>=48&&c<=57)continue;
+    if(c===43||c===47)continue;
+    return false;
+  }
+  return true;
+}
+function safeImg(u){
+  u=String(u||'');
+  if(/^blob:https?:\/\/[^\s"'()<>\\]{1,200}$/.test(u))return u;
+  if(!u.startsWith('data:'))return '';
+  const i=u.toLowerCase().indexOf(';base64,');
+  if(i<6||i>220)return '';
+  const head=u.slice(5,i).split(';');
+  const mime=String(head[0]||'').toLowerCase();
+  if(!/^(image\/(jpeg|jpg|png|webp|gif)|(video|audio)\/[a-z0-9.+-]{1,40})$/.test(mime))return '';
+  for(let k=1;k<head.length;k++){
+    if(!/^codecs=[a-zA-Z0-9,.\- "']{1,60}$/.test(head[k]))return '';
+  }
+  return isB64(u.slice(i+8))?u:'';
+}
 function colorFor(str){
   let h=0;for(let i=0;i<str.length;i++)h=(h*31+str.charCodeAt(i))%CHAT_COLORS.length;
   return CHAT_COLORS[h];
@@ -1978,7 +2029,7 @@ async function startContact(topic){
 function avaHtml(peer,extra){
   extra=extra||'';
   const p=peer||{};
-  if(p.photo)return '<div class="ava" '+extra+' style="background-image:url('+p.photo+');background-size:cover;background-position:center"></div>';
+  if(safeImg(p.photo))return '<div class="ava" '+extra+' style="background-image:url('+safeImg(p.photo)+');background-size:cover;background-position:center"></div>';
   const color=p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?'));
   return '<div class="ava" '+extra+' style="background:'+color+'">'+esc((p.name||'?')[0].toUpperCase())+'</div>';
 }
@@ -2014,6 +2065,17 @@ function showWaking(){}
 
 /* Бесплатный сервер засыпает без нагрузки: первый запрос может идти до минуты.
    Поэтому ждём дольше и пробуем несколько раз, вместо того чтобы сразу сдаваться. */
+/* Ключ дев-панели (DEV_SECRET на Render). Спрашивается при первом дев-действии
+   после запуска приложения и хранится только в памяти — ни в localStorage,
+   ни в cookie. Украденный токен без него дев-панель не открывает. */
+const devKeyStore=(()=>{let k='';return{
+  get(){return k},
+  async ask(){
+    const v=prompt('Ключ разработчика (DEV_SECRET с сервера):');
+    k=(v||'').trim();return k;
+  },
+  clear(){k=''}
+}})();
 async function api(path,body,opts){
   if(!API){
     toast('Сервер не подключён — впишите адрес в index.html');
@@ -2021,6 +2083,8 @@ async function api(path,body,opts){
   }
   const tries=(opts&&opts.tries)||3;
   let lastErr=null;
+  const isDevCall=path.startsWith('/api/dev/');
+  if(isDevCall&&!devKeyStore.get()){if(!await devKeyStore.ask())throw new Error('no dev key')}
 
   for(let attempt=1;attempt<=tries;attempt++){
     const ctrl=new AbortController();
@@ -2029,7 +2093,7 @@ async function api(path,body,opts){
     try{
       const res=await fetch(API+path,{
         method:body?'POST':'GET',
-        headers:Object.assign({'Content-Type':'application/json'},token?{Authorization:'Bearer '+token}:{}),
+        headers:Object.assign({'Content-Type':'application/json'},token?{Authorization:'Bearer '+token}:{},isDevCall?{'X-Dev-Key':devKeyStore.get()}:{}),
         body:body?JSON.stringify(body):undefined,
         signal:ctrl.signal
       });
@@ -2038,6 +2102,12 @@ async function api(path,body,opts){
 
       const data=await res.json().catch(()=>({}));
       if(res.status===401){logout(true);throw new Error('unauthorized')}
+      if(res.status===428&&data.devKey){
+        devKeyStore.clear();
+        toast('Неверный ключ разработчика');
+        if(attempt===1&&await devKeyStore.ask()){continue}
+        throw new Error('dev key');
+      }
       if(res.status>=500&&attempt<tries){
         lastErr=new Error(data.error||'server');
         await new Promise(r=>setTimeout(r,1500*attempt));
@@ -2524,9 +2594,12 @@ async function logout(silent){
 function connectWS(){
   if(!API||!token)return;
   if(ws){try{ws.close()}catch(e){}}
-  ws=new WebSocket(WS_URL+'?token='+encodeURIComponent(token));
+  /* Токен уходит первым сообщением, а не в адресе — адреса оседают в логах */
+  ws=new WebSocket(WS_URL);
+  ws.onopen=()=>{try{ws.send(JSON.stringify({type:'auth',token}))}catch(e){}};
   ws.onmessage=async ev=>{
     let d;try{d=JSON.parse(ev.data)}catch(e){return}
+    if(d.type==='auth')return;
     if(d.type==='message'){
       const chat=S.chats.find(c=>c.id===d.chatId);
       if(!chat){
@@ -2569,7 +2642,11 @@ function connectWS(){
     if(d.type==='rtc'){try{await onRtc(d)}catch(e){}}
     if(d.type==='chats'||d.type==='state'){await refresh()}
   };
-  ws.onclose=()=>{if(token)setTimeout(connectWS,4000)};
+  ws.onclose=ev=>{
+    /* 4003 — сервер закрыл сессию (бан, сброс, выход): не долбим переподключением */
+    if(ev&&ev.code===4003){logout(true);return}
+    if(token)setTimeout(connectWS,4000)
+  };
   ws.onerror=()=>{};
 }
 async function refresh(){
@@ -2634,7 +2711,7 @@ function openChat(id){
   const peer=c.peer||{name:'?',username:''};
   show('s-chat');
   const av=document.getElementById('chat-ava');
-  if(peer.photo){av.style.background='url('+peer.photo+') center/cover';av.textContent='';}
+  if(safeImg(peer.photo)){av.style.background='url('+safeImg(peer.photo)+') center/cover';av.textContent='';}
   else if(c.service){av.style.background='linear-gradient(135deg,#9788EA,#5B4BD4)';av.textContent='N';}
   else{av.style.background=peer.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(peer.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(peer.username||peer.name));av.textContent=(peer.name||'?')[0].toUpperCase();}
   document.getElementById('chat-name').innerHTML=(c.secret?'<span title="секретный чат">🔒 </span>':'')+esc(peer.name)+
@@ -2669,7 +2746,7 @@ function openPeer(){
   const p=c.peer||{};
   const cover=COVERS[(p.cover||0)%COVERS.length];
   const avaStyle='display:inline-flex;width:118px;height:118px;font-size:2.7rem;border:4px solid #fff;box-shadow:0 6px 20px rgba(31,32,64,.18);background:'+
-    (p.photo?'url('+p.photo+') center/cover':(p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?'))));
+    (safeImg(p.photo)?'url('+safeImg(p.photo)+') center/cover':(p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?'))));
   const avaBig='<div class="ava" style="'+avaStyle+'">'+(p.photo?'':esc((p.name||'?')[0].toUpperCase()))+'</div>';
   const check=p.verified?' <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-10"/></svg></span>':'';
   let sub=c.type==='channel'?(c.subs||1)+' подписчиков':(p.bot?'бот':fmtSeen(p));
@@ -2692,7 +2769,7 @@ function openPeer(){
   peerGifts=(p&&p.gifts)||[];
   go('s-peer');
   document.getElementById('peer-body').innerHTML=
-    '<div style="height:150px;background:'+(p.coverImg?'url('+p.coverImg+') center/cover':cover)+'"></div>'+
+    '<div style="height:150px;background:'+(safeImg(p.coverImg)?'url('+safeImg(p.coverImg)+') center/cover':cover)+'"></div>'+
     '<div style="margin-top:-59px;text-align:center">'+avaBig+'</div>'+
     '<div style="text-align:center;padding:12px 20px 2px"><b style="font-size:1.4rem">'+esc(p.name||'')+'</b>'+check+devChip(p)+(p.status?' <span style="font-size:1rem">'+esc(p.status)+'</span>':'')+'</div>'+
     '<div style="text-align:center;color:var(--ink-2);font-size:.82rem;padding-bottom:4px" onclick="copyText(\'@'+esc(p.username||'')+'\');toast(\'Юзернейм скопирован\')">@'+esc(p.username||'')+' · '+esc(sub)+'</div>'+
@@ -2756,7 +2833,7 @@ function pickWpFile(input){
     wpCustom=data;wpPick='';
     const box=document.getElementById('wp-list');
     box.insertAdjacentHTML('afterbegin',
-      '<div style="height:86px;border-radius:14px;background:url('+data+') center/cover;outline:3px solid var(--accent);outline-offset:2px"></div>');
+      '<div style="height:86px;border-radius:14px;background:url('+safeImg(data)+') center/cover;outline:3px solid var(--accent);outline-offset:2px"></div>');
     toast('Картинка выбрана — жмите «Поставить»');
   });
 }
@@ -2877,7 +2954,8 @@ const vidUrls={};
 function dataToBlobUrl(data){
   const i=data.indexOf(',');
   const meta=data.slice(5,i);
-  const mime=meta.split(';')[0]||'video/webm';
+  let mime=meta.split(';')[0]||'video/webm';
+  if(!/^(video|audio|image)\/[a-z0-9.+-]+$/i.test(mime))mime='application/octet-stream';
   const bin=atob(data.slice(i+1));
   const len=bin.length;
   const arr=new Uint8Array(len);
@@ -2944,7 +3022,7 @@ function applyWallpaper(c){
   const v=(c&&c.wp)||'';
   if(v.startsWith('data:')){
     scr.classList.add('has-wp');
-    scr.style.background='url('+v+') center/cover no-repeat';
+    scr.style.background='url('+safeImg(v)+') center/cover no-repeat';
   }else if(WALLPAPERS[v]){
     scr.classList.add('has-wp');
     scr.style.background=WALLPAPERS[v];
@@ -3075,7 +3153,7 @@ function renderMsgs(c){
       if(m.fwd)body+='<div style="font-size:.72rem;opacity:.75;margin-bottom:3px">↪ Переслано от <b>'+esc(m.fwd.name)+'</b></div>';
       if(m.reply)body+='<div style="border-left:2.5px solid '+(m.out?'rgba(255,255,255,.7)':'var(--accent)')+';padding:2px 8px;margin-bottom:5px;border-radius:4px;background:'+(m.out?'rgba(255,255,255,.15)':'var(--accent-soft)')+'"><b style="font-size:.72rem">'+esc(m.reply.name)+'</b><div style="font-size:.76rem;opacity:.85;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35">'+esc(m.reply.text)+'</div></div>';
       if(m.media&&m.media.kind==='photo'){
-        body+='<span class="ph-wrap"><img class="ph" src="'+m.media.data+'" onclick="event.stopPropagation();viewPhoto(this.src)">'+
+        body+='<span class="ph-wrap"><img class="ph" src="'+safeImg(m.media.data)+'" onclick="event.stopPropagation();viewPhoto(this.src)">'+
           '<button class="ph-save" onclick="event.stopPropagation();savePhoto(\''+m.id+'\')" title="скачать">'+
           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="16" height="16"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg></button></span>';
       }
@@ -3296,6 +3374,56 @@ async function devPurge(){
   try{
     const r=await api('/api/dev/purge',{});
     toast('Освобождено '+r.freedMb+' МБ, удалено вложений: '+r.count);
+  }catch(e){}
+}
+async function devStorage(){
+  try{
+    const r=await api('/api/dev/storage',{});
+    const s=r.storage,m=s.chatMedia,p=s.profiles;
+    const el=document.getElementById('dev-storage');
+    el.style.display='block';
+    el.textContent=
+      'ВСЕГО В БАЗЕ: '+s.totalMb+' МБ\n'+
+      '  вложения: '+s.mediaMb+' МБ\n'+
+      '  переписка и профили: '+s.textMb+' МБ\n\n'+
+      'В ЧАТАХ:\n'+
+      '  фото — '+m.photoMb+' МБ ('+m.photos+' шт.)\n'+
+      '  голосовые — '+m.voiceMb+' МБ ('+m.voices+' шт.)\n'+
+      '  видео — '+m.videoMb+' МБ ('+m.videos+' шт.)\n'+
+      '  кружки — '+m.circleMb+' МБ ('+m.circles+' шт.)\n'+
+      '  файлы — '+m.fileMb+' МБ ('+m.files+' шт.)\n\n'+
+      'В ПРОФИЛЯХ:\n'+
+      '  аватары — '+p.avatarsMb+' МБ\n'+
+      '  свои обложки — '+p.coversMb+' МБ\n'+
+      '  музыка — '+p.musicMb+' МБ\n'+
+      '  сторисы — '+s.storiesMb+' МБ\n\n'+
+      'Старше 30 дней: '+s.olderThan30dMb+' МБ\n'+
+      'Людей: '+s.users+' · сообщений: '+s.messages;
+  }catch(e){}
+}
+async function devPurgeOld(){
+  if(!await askBox('Удалить все вложения старше 30 дней — фото, голосовые, видео, кружки, файлы? Тексты сообщений останутся.',{danger:true,yes:'Удалить'}))return;
+  try{
+    const r=await api('/api/dev/purge',{kinds:['photo','voice','video','circle','file'],olderDays:30});
+    toast('Освобождено '+r.freedMb+' МБ, вложений: '+r.count);
+    devStorage();
+  }catch(e){}
+}
+async function devPurgeAll(){
+  if(!await askBox('Удалить ВСЕ вложения во всех чатах — включая свежие фото и голосовые? Отменить будет нельзя.',{danger:true,yes:'Удалить всё'}))return;
+  if(!await askBox('Точно? Это заденет и переписку Светланы.',{danger:true,yes:'Да, удалить'}))return;
+  try{
+    const r=await api('/api/dev/purge',{kinds:['photo','voice','video','circle','file']});
+    toast('Освобождено '+r.freedMb+' МБ, вложений: '+r.count);
+    devStorage();
+  }catch(e){}
+}
+async function devPurgeMusic(){
+  if(!await askBox('Удалить музыку из всех профилей? Она занимает до 12 МБ на человека.',{danger:true,yes:'Удалить'}))return;
+  try{
+    const r=await api('/api/dev/purge',{kinds:[],music:true});
+    toast('Освобождено '+r.freedMb+' МБ, профилей: '+r.music);
+    devStorage();
   }catch(e){}
 }
 async function devTrust(){
@@ -4340,7 +4468,7 @@ function callUI(state,peer){
   document.getElementById('call-name').textContent=(peer||{}).name||'';
   const av=document.getElementById('call-ava');
   av.style.display='flex';
-  if((peer||{}).photo){av.style.background='url('+peer.photo+') center/cover';av.textContent=''}
+  if(safeImg((peer||{}).photo)){av.style.background='url('+safeImg(peer.photo)+') center/cover';av.textContent=''}
   else{av.style.background=colorFor((peer||{}).username||(peer||{}).name||'?');av.textContent=((peer||{}).name||'?')[0].toUpperCase()}
   document.getElementById('call-status').textContent=state;
   document.getElementById('call-btns-in').style.display=call&&call.dir==='in'&&!call.pc?'flex':'none';
@@ -4570,7 +4698,7 @@ function renderStories(){
   }
   html+=st.map((g,i)=>{
     const u=g.user||{};
-    const bg=u.photo?'background-image:url('+u.photo+')':'background:'+colorFor(u.username||u.name||'?');
+    const bg=safeImg(u.photo)?'background-image:url('+safeImg(u.photo)+')':'background:'+colorFor(u.username||u.name||'?');
     return '<div class="story" onclick="openStories('+i+')"><div class="ring"><div style="'+bg+'">'+(u.photo?'':esc((u.name||'?')[0].toUpperCase()))+'</div></div><p>'+(g.mine?'Вы':esc(u.name||''))+'</p></div>';
   }).join('');
   row.innerHTML=html;
@@ -4589,7 +4717,7 @@ function showStory(){
   if(!it){closeStory();return}
   const u=g.user||{};
   const av=document.getElementById('sv-ava');
-  if(u.photo){av.style.background='url('+u.photo+') center/cover';av.textContent=''}
+  if(safeImg(u.photo)){av.style.background='url('+safeImg(u.photo)+') center/cover';av.textContent=''}
   else{av.style.background=colorFor(u.username||u.name||'?');av.textContent=(u.name||'?')[0].toUpperCase()}
   document.getElementById('sv-name').textContent=u.name||'';
   document.getElementById('sv-time').textContent=fmtTime(it.time)+' · '+(svIdx+1)+' из '+g.items.length;
@@ -4605,10 +4733,10 @@ function showStory(){
     img.style.display='none';
     sv.style.display='block';
     if(!vidUrls['st'+it.id]){try{vidUrls['st'+it.id]=dataToBlobUrl(it.photo)}catch(e){}}
-    sv.src=vidUrls['st'+it.id]||it.photo;
+    sv.src=safeImg(vidUrls['st'+it.id]||it.photo);
   }else{
     sv.style.display='none';sv.src='';
-    img.style.display='block';img.src=it.photo;
+    img.style.display='block';img.src=safeImg(it.photo);
   }
   document.getElementById('sv-text').textContent=it.text||'';
   document.getElementById('sv-del').style.display=g.mine?'flex':'none';
@@ -5603,7 +5731,7 @@ function showBanner(c,text){
     document.body.appendChild(b);
   }
   const p=c.peer||{};
-  const bg=p.photo?'url('+p.photo+') center/cover':(p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?')));
+  const bg=safeImg(p.photo)?'url('+safeImg(p.photo)+') center/cover':(p.channel?'linear-gradient(135deg,#5AB2F0,#2E86D9)':(p.bot?'linear-gradient(135deg,#F5A64C,#E0752F)':colorFor(p.username||p.name||'?')));
   b.innerHTML='<div class="ava" style="width:38px;height:38px;font-size:.9rem;flex:none;background:'+bg+'">'+(p.photo?'':esc((p.name||'?')[0].toUpperCase()))+'</div>'+
     '<div style="min-width:0"><b style="font-size:.88rem">'+esc(p.name||'')+'</b>'+
     '<div style="font-size:.8rem;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(text.slice(0,60))+'</div></div>';
@@ -6006,7 +6134,7 @@ function renderCatalog(){
 function renderProfile(){
   if(!S)return;
   const u=S.user;
-  document.getElementById('p-cover').style.background=u.coverImg?('url('+u.coverImg+') center/cover'):COVERS[u.cover||0];
+  document.getElementById('p-cover').style.background=safeImg(u.coverImg)?('url('+safeImg(u.coverImg)+') center/cover'):COVERS[u.cover||0];
   renderShelf();
   const mm=document.getElementById('my-music');
   if(mm){
@@ -6015,7 +6143,7 @@ function renderProfile(){
     else mm.style.display='none';
   }
   const pa=document.getElementById('p-ava');
-  if(u.photo){pa.style.background='url('+u.photo+') center/cover';document.getElementById('p-initial').textContent='';}
+  if(safeImg(u.photo)){pa.style.background='url('+safeImg(u.photo)+') center/cover';document.getElementById('p-initial').textContent='';}
   else{pa.style.background=AVAS[u.ava||0];document.getElementById('p-initial').textContent=(u.name||'?')[0].toUpperCase();}
   document.getElementById('p-status').textContent=u.status||'';
   document.getElementById('p-name').innerHTML=esc(u.name)+devChip(u);

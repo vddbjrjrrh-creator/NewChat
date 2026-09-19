@@ -13,13 +13,37 @@ const { WebSocketServer } = require('ws');
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data.json');
 
-/* Юзернеймы, которым сервер выдаёт галочку разработчика.
-   Впиши сюда себя и друга. */
-const DEV_USERNAMES = (process.env.DEV_USERNAMES || 'shadow')
+/* ===== РАЗРАБОТЧИКИ =====
+   DEV_USERNAMES — юзернеймы разработчиков (без значения по умолчанию:
+   пустая переменная = дев-панели нет ни у кого).
+   DEV_USER_IDS — надёжнее: список id аккаунтов через запятую. Когда задан,
+   юзернейм больше ничего не решает — украсть или перекупить роль нельзя.
+   DEV_SECRET — второй ключ для дев-панели. Без него дев-маршруты закрыты
+   совсем, даже с валидным токеном разработчика. */
+const DEV_USERNAMES = (process.env.DEV_USERNAMES || '')
   .split(',').map(s => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+const DEV_USER_IDS = (process.env.DEV_USER_IDS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const DEV_SECRET = String(process.env.DEV_SECRET || '');
 /* Помощники разработчика: плашка CO-DEV, но без доступа к дев-панели */
 const CODEV_USERNAMES = (process.env.CODEV_USERNAMES || '')
   .split(',').map(s => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+/* Эти юзернеймы нельзя продать, подарить, удалить или занять заново */
+const PROTECTED_USERNAMES = DEV_USERNAMES.concat(CODEV_USERNAMES);
+
+/* ===== СЕССИИ И ПРОИСХОЖДЕНИЕ ЗАПРОСОВ =====
+   SESSION_EPOCH — любое число или слово. Поменяли значение — все токены
+   всех пользователей сгорают при следующем запуске, каждый входит заново.
+   ALLOWED_ORIGINS — с каких адресов браузеру разрешено ходить на сервер. */
+const SESSION_EPOCH = String(process.env.SESSION_EPOCH || '');
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://vddbjrjrrh-creator.github.io')
+  .split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+/* Куда слать тревоги: id Telegram-чата владельца. Если пусто — берём tgId
+   разработчиков, привязавших телефон через бота. */
+const OWNER_TG_CHAT = String(process.env.OWNER_TG_CHAT_ID || '');
+/* Одноразовая чистка регистраций за окно времени, формат:
+   PURGE_REGISTRATIONS=2026-09-18T09:00:00Z..2026-09-18T18:00:00Z */
+const PURGE_REGISTRATIONS = String(process.env.PURGE_REGISTRATIONS || '');
 
 /* Ключ от SMS.ru. Если не задан — код показывается на экране (режим разработки). */
 const SMSRU_API_ID = process.env.SMSRU_API_ID || '';
@@ -56,7 +80,6 @@ const PUBLIC_URL = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL ||
 /* Денег у площадки нет: покупатель платит продавцу напрямую, банк в банк.
    Сервер лишь замораживает юзернейм на время сделки и передаёт его. */
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
 /* Премиум теперь не за деньги, а за приглашённых друзей */
 const PREMIUM = {
@@ -84,6 +107,9 @@ const BOTS_PER_USER = Number(process.env.BOTS_PER_USER || 3);
 const MAX_MB = Number(process.env.MAX_UPLOAD_MB || 10);
 const MAX_BYTES = Math.round(MAX_MB * 1.37 * 1024 * 1024);
 const MEDIA_KEEP_DAYS = Number(process.env.MEDIA_KEEP_DAYS || 7);
+/* Фото и голосовые раньше не удалялись никогда — база росла до упора.
+   0 отключает срок и возвращает прежнее поведение. */
+const PHOTO_KEEP_DAYS = Number(process.env.PHOTO_KEEP_DAYS || 30);
 /* Музыка в профиле. Лежит в базе, поэтому лимит осознанный. */
 const MUSIC_MB = Number(process.env.MUSIC_MB || 12);
 
@@ -266,6 +292,25 @@ function normUsername(u) {
    с куском разметки. В браузере такая строка подставлялась в атрибут
    и вырывалась наружу — отсюда чужие диалоги поверх приложения.
    Теперь строка разбирается на части и собирается заново из проверенного. */
+/* Быстрая проверка base64 без регулярных выражений: один проход по строке,
+   память и стек не растут от длины. */
+function isBase64(s) {
+  const n = s.length;
+  if (n < 8) return false;
+  let end = n;
+  if (s.charCodeAt(end - 1) === 61) end--;        /* '=' */
+  if (s.charCodeAt(end - 1) === 61) end--;
+  if (end < 8) return false;
+  for (let i = 0; i < end; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 65 && c <= 90) continue;              /* A-Z */
+    if (c >= 97 && c <= 122) continue;             /* a-z */
+    if (c >= 48 && c <= 57) continue;              /* 0-9 */
+    if (c === 43 || c === 47) continue;            /* + / */
+    return false;
+  }
+  return true;
+}
 const MIME_GROUPS = {
   image: /^image\/(jpeg|png|webp|gif)$/,
   audio: /^audio\/[a-z0-9.+-]{1,40}$/,
@@ -280,8 +325,10 @@ function sanitizeDataUrl(raw, group, maxLen) {
   const idx = str.toLowerCase().indexOf(';base64,');
   if (idx < 6 || idx > 220) return null;
   const tail = str.slice(idx + 8);
-  /* Настоящий base64 и ничего кроме него */
-  if (!/^[A-Za-z0-9+/]{8,}={0,2}$/.test(tail)) return null;
+  /* Настоящий base64 и ничего кроме него.
+     Проверяем посимвольно, а не регулярным выражением: на вложении в
+     несколько мегабайт регулярка переполняет стек и роняет сервер. */
+  if (!isBase64(tail)) return null;
   const parts = str.slice(5, idx).split(';');
   const mime = String(parts.shift() || '').toLowerCase();
   const re = MIME_GROUPS[group];
@@ -416,7 +463,20 @@ function iceServers() {
 }
 
 function isDev(user) {
-  return !!(user && (user.dev || DEV_USERNAMES.includes(user.username || '')));
+  if (!user || user.isBot || user.banned) return false;
+  /* Флаг user.dev в базе не учитываем: его можно подделать прямым доступом к базе */
+  if (DEV_USER_IDS.length) return DEV_USER_IDS.includes(user.id);
+  return DEV_USERNAMES.includes(user.username || '');
+}
+function isProtectedUsername(u) {
+  return PROTECTED_USERNAMES.includes(normUsername(u));
+}
+/* Сравнение ключей без утечки по времени ответа */
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a || ''));
+  const y = Buffer.from(String(b || ''));
+  if (!x.length || x.length !== y.length) return false;
+  return crypto.timingSafeEqual(x, y);
 }
 
 function isCodev(user) {
@@ -890,9 +950,13 @@ setInterval(() => {
   let vidCleaned = false;
   for (const c of Object.values(db.chats)) {
     for (const m of c.msgs) {
-      if (m.media && ['video', 'circle', 'file'].includes(m.media.kind) && now() - m.time > MEDIA_KEEP_DAYS * 86400e3) {
+      if (!m.media || !m.media.data) continue;
+      const heavy = ['video', 'circle', 'file'].includes(m.media.kind);
+      const light = ['photo', 'voice'].includes(m.media.kind);
+      const days = heavy ? MEDIA_KEEP_DAYS : (light ? PHOTO_KEEP_DAYS : 0);
+      if (days > 0 && now() - m.time > days * 86400e3) {
         m.media = null;
-        m.text = m.text || ('Вложение удалено (хранится ' + MEDIA_KEEP_DAYS + ' дн.)');
+        m.text = m.text || ('Вложение удалено (хранится ' + days + ' дн.)');
         m.expired = true;
         vidCleaned = true;
       }
@@ -939,16 +1003,89 @@ function push(userId, payload) {
 
 /* ================= HTTP ================= */
 
+/* Заголовки безопасности и CORS. Раньше стояло Access-Control-Allow-Origin: *,
+   то есть любой сайт мог ходить на наш сервер от имени открытой вкладки.
+   Теперь разрешены только адреса из ALLOWED_ORIGINS. */
+function baseHeaders(res) {
+  const h = {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
+  };
+  if (res && res.__origin) {
+    h['Access-Control-Allow-Origin'] = res.__origin;
+    h['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Dev-Key';
+    h['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
+    h['Access-Control-Max-Age'] = '600';
+    h['Vary'] = 'Origin';
+  }
+  return h;
+}
+/* Проверка происхождения запроса. Без заголовка Origin (curl, боты, вебхук
+   Telegram) — пропускаем, CORS-заголовков не даём. С чужим Origin — отказ. */
+function originAllowed(req, res) {
+  const origin = String(req.headers.origin || '').replace(/\/$/, '');
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes(origin)) { res.__origin = origin; return true; }
+  return false;
+}
 function send(res, code, obj) {
   const body = JSON.stringify(obj);
-  res.writeHead(code, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Cache-Control': 'no-store'
-  });
+  res.writeHead(code, Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, baseHeaders(res)));
   res.end(body);
+}
+
+/* ===== ТРЕВОГИ ВЛАДЕЛЬЦУ =====
+   Уходят в Telegram: в OWNER_TG_CHAT_ID либо разработчикам, привязавшим
+   телефон через бота. Одинаковый текст чаще раза в минуту не шлём. */
+const alertSent = new Map();
+async function alertOwner(text) {
+  try {
+    const t = now();
+    if ((alertSent.get(text) || 0) > t - 60000) return;
+    alertSent.set(text, t);
+    for (const [k, v] of alertSent) if (v < t - 600000) alertSent.delete(k);
+    console.warn('ТРЕВОГА: ' + text);
+    if (!TG_ENABLED) return;
+    const targets = OWNER_TG_CHAT ? [OWNER_TG_CHAT]
+      : Object.values(db.users).filter(u => isDev(u) && (u.tgId || u.telegramId)).map(u => u.tgId || u.telegramId);
+    for (const chat_id of targets) await tg('sendMessage', { chat_id, text: '🛡 Newchat: ' + text });
+  } catch (e) {}
+}
+
+/* ===== ЖУРНАЛ ДЕЙСТВИЙ РАЗРАБОТЧИКОВ ===== */
+function audit(user, req, url, body) {
+  db.audit = db.audit || [];
+  const short = {};
+  for (const [k, v] of Object.entries(body || {})) {
+    if (k === 'media' || k === 'photo' || k === 'data') continue;
+    short[k] = typeof v === 'string' ? v.slice(0, 80) : v;
+  }
+  db.audit.push({ time: now(), user: user ? (user.username || user.id) : '', ip: clientIp(req), url, body: short });
+  if (db.audit.length > 1000) db.audit.splice(0, db.audit.length - 1000);
+}
+function clientIp(req) {
+  try {
+    return String((req.headers['x-forwarded-for'] || '').split(',')[0] || req.socket.remoteAddress || '').trim();
+  } catch (e) { return ''; }
+}
+/* Неверные ключи дев-панели: после пяти за четверть часа адрес отдыхает полчаса */
+const devKeyFails = new Map();
+function devKeyFailed(req, user) {
+  const ip = clientIp(req) || '?';
+  const t = now();
+  const list = (devKeyFails.get(ip) || []).filter(x => x > t - 15 * 60000);
+  list.push(t);
+  devKeyFails.set(ip, list);
+  alertOwner('Неверный ключ дев-панели. Аккаунт @' + ((user && user.username) || '?') + ', адрес ' + ip + ', попытка ' + list.length + '.');
+  if (list.length >= 5) {
+    ipBans.set(ip, t + 30 * 60000);
+    dropSessions(user.id);
+    save();
+    alertOwner('Пять неверных ключей подряд — адрес ' + ip + ' заблокирован на 30 минут, сессии @' + ((user && user.username) || '?') + ' сброшены.');
+  }
 }
 
 function readBody(req) {
@@ -959,8 +1096,12 @@ function readBody(req) {
       if (data.length > Math.max(MAX_BYTES, MUSIC_MB * 1.4 * 1024 * 1024) * 1.6) req.destroy();
     });
     req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}); }
-      catch { resolve({}); }
+      try {
+        /* Ключи __proto__ / constructor / prototype в теле запроса — попытка
+           загрязнить прототипы. Такое просто не разбираем. */
+        const obj = data ? JSON.parse(data, (k, v) => (k === '__proto__' || k === 'constructor' || k === 'prototype') ? undefined : v) : {};
+        resolve(obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {});
+      } catch { resolve({}); }
     });
   });
 }
@@ -1524,12 +1665,16 @@ route('POST', '/api/auth/verify', async (req, res, body) => {
 });
 
 route('POST', '/api/profile/setup', async (req, res, body, user) => {
-  const name = String(body.name || '').trim().slice(0, 30);
+  const name = cleanName(body.name, 30);
   const username = normUsername(body.username);
 
   if (!name) return send(res, 400, { error: 'Введите имя' });
   if (username.length < 5) return send(res, 400, { error: 'Юзернейм — минимум 5 символов' });
   if (db.usernames[username]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
+  /* Когда задан DEV_USER_IDS, имя разработчика может взять только он сам */
+  if (isProtectedUsername(username) && DEV_USER_IDS.length && !DEV_USER_IDS.includes(user.id)) {
+    return send(res, 400, { error: 'Этот юзернейм зарезервирован' });
+  }
 
   user.name = cleanText(name, 30);
   user.username = username;
@@ -1565,8 +1710,8 @@ route('POST', '/api/profile/update', async (req, res, body, user) => {
   if (typeof body.cover === 'number') user.cover = body.cover;
   if (typeof body.ava === 'number') user.ava = body.ava;
   if (typeof body.banner === 'number') user.banner = Math.max(0, Math.min(7, body.banner));
-  if (typeof body.status === 'string') user.status = cleanText(body.status, 40);
-  if (typeof body.name === 'string' && body.name.trim()) user.name = body.name.trim().slice(0, 30);
+  if (typeof body.status === 'string') user.status = cleanName(body.status, 40);
+  if (typeof body.name === 'string' && cleanName(body.name, 30)) user.name = cleanName(body.name, 30);
   if (typeof body.photo === 'string') {
     /* Аватарка: маленький jpeg в base64, клиент сжимает сам */
     if (body.photo === '') user.photo = null;
@@ -1818,7 +1963,8 @@ route('POST', '/api/messages/delete', async (req, res, body, user) => {
 /* ---------- Жалобы ---------- */
 
 function esc(v) {
-  return String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function reportHtml(r) {
@@ -2041,6 +2187,7 @@ route('POST', '/api/deals/start', async (req, res, body, user) => {
   const rec = db.usernames[username];
 
   if (!rec || !rec.forSale || rec.frozen) return send(res, 404, { error: 'Лот не найден или уже в сделке' });
+  if (isProtectedUsername(username)) return send(res, 400, { error: 'Юзернейм команды не продаётся' });
   if (rec.owner === user.id) return send(res, 400, { error: 'Это ваш лот' });
 
   const seller = db.users[rec.owner];
@@ -2116,8 +2263,8 @@ route('POST', '/api/deals/dispute', async (req, res, body, user) => {
 });
 
 /* Модерация споров — только для владельца сервиса */
-route('POST', '/api/admin/deals', async (req, res, body) => {
-  if (!ADMIN_TOKEN || body.adminToken !== ADMIN_TOKEN) return send(res, 403, { error: 'Нет доступа' });
+route('POST', '/api/dev/deals', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
 
   if (body.action === 'list') {
     return send(res, 200, {
@@ -2183,20 +2330,86 @@ route('POST', '/api/dev/stats', async (req, res, body, user) => {
   });
 });
 
+/* Что занимает место в базе. Ничего не меняет — только считает. */
+route('POST', '/api/dev/storage', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const mb = b => Math.round(b / 1048576 * 10) / 10;
+  const by = { photo: 0, voice: 0, video: 0, circle: 0, file: 0 };
+  const cnt = { photo: 0, voice: 0, video: 0, circle: 0, file: 0 };
+  let older30 = 0;
+  for (const c of Object.values(db.chats)) {
+    for (const m of c.msgs) {
+      if (!m.media || !m.media.data) continue;
+      const k = m.media.kind;
+      if (by[k] === undefined) continue;
+      by[k] += m.media.data.length; cnt[k]++;
+      if (now() - m.time > 30 * 86400e3) older30 += m.media.data.length;
+    }
+  }
+  let avatars = 0, covers = 0, music = 0, stories = 0;
+  for (const u of Object.values(db.users)) {
+    if (u.photo) avatars += u.photo.length;
+    if (u.coverImg) covers += u.coverImg.length;
+    if (u.music && u.music.data) music += u.music.data.length;
+  }
+  for (const st of db.stories || []) if (st.photo) stories += st.photo.length;
+  const total = JSON.stringify(db).length;
+  const media = Object.values(by).reduce((a, b) => a + b, 0) + avatars + covers + music + stories;
+  send(res, 200, {
+    storage: {
+      totalMb: mb(total),
+      mediaMb: mb(media),
+      textMb: mb(total - media),
+      olderThan30dMb: mb(older30),
+      chatMedia: { photoMb: mb(by.photo), photos: cnt.photo, voiceMb: mb(by.voice), voices: cnt.voice,
+                   videoMb: mb(by.video), videos: cnt.video, circleMb: mb(by.circle), circles: cnt.circle,
+                   fileMb: mb(by.file), files: cnt.file },
+      profiles: { avatarsMb: mb(avatars), coversMb: mb(covers), musicMb: mb(music) },
+      storiesMb: mb(stories),
+      users: Object.keys(db.users).length,
+      messages: Object.values(db.chats).reduce((a, c) => a + c.msgs.length, 0)
+    }
+  });
+});
+
+/* Очистка вложений. По умолчанию — тяжёлое (видео, кружки, файлы).
+   kinds: список видов, olderDays: только старше стольких дней,
+   music/covers: чистить музыку и свои обложки профилей. */
 route('POST', '/api/dev/purge', async (req, res, body, user) => {
   if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  const allowed = ['photo', 'voice', 'video', 'circle', 'file'];
+  const kinds = Array.isArray(body.kinds) && body.kinds.length
+    ? body.kinds.filter(k => allowed.includes(k))
+    : ['video', 'circle', 'file'];
+  const older = Math.max(0, Number(body.olderDays) || 0) * 86400e3;
   let freed = 0, n = 0;
   for (const c of Object.values(db.chats)) {
     for (const m of c.msgs) {
-      if (m.media && m.media.data && ['video', 'circle', 'file'].includes(m.media.kind)) {
-        freed += m.media.data.length; n++;
-        m.media = null;
-        m.text = m.text || 'Вложение удалено администратором';
-      }
+      if (!m.media || !m.media.data || !kinds.includes(m.media.kind)) continue;
+      if (older && now() - m.time < older) continue;
+      freed += m.media.data.length; n++;
+      m.media = null;
+      m.text = m.text || 'Вложение удалено администратором';
+      m.expired = true;
     }
   }
+  let musicN = 0, coverN = 0;
+  if (body.music) {
+    for (const u of Object.values(db.users)) if (u.music && u.music.data) { freed += u.music.data.length; u.music = null; musicN++; }
+  }
+  if (body.covers) {
+    for (const u of Object.values(db.users)) if (u.coverImg) { freed += u.coverImg.length; u.coverImg = null; coverN++; }
+  }
+  if (body.stories) {
+    for (const st of db.stories || []) if (st.photo) freed += st.photo.length;
+    db.stories = [];
+  }
   save();
-  send(res, 200, { freedMb: Math.round(freed / 1048576 * 10) / 10, count: n });
+  send(res, 200, {
+    freedMb: Math.round(freed / 1048576 * 10) / 10,
+    count: n, music: musicN, covers: coverN,
+    hint: 'Neon отдаёт место не сразу: после чистки выполните VACUUM FULL newchat_db в SQL Editor.'
+  });
 });
 
 route('POST', '/api/dev/gift', async (req, res, body, user) => {
@@ -2208,6 +2421,7 @@ route('POST', '/api/dev/gift', async (req, res, body, user) => {
   if (!target) return send(res, 404, { error: 'Пользователь не найден' });
   if (!gift || gift.length < 5) return send(res, 400, { error: 'Юзернейм от 5 символов' });
   if (db.usernames[gift]) return send(res, 400, { error: 'Этот юзернейм занят' });
+  if (isProtectedUsername(gift)) return send(res, 400, { error: 'Этот юзернейм зарезервирован' });
   db.usernames[gift] = { owner: target.id, main: false, forSale: false, price: 0 };
   save();
   serviceMessage(target.id, 'Команда Newchat подарила вам юзернейм @' + gift + '.');
@@ -2233,11 +2447,11 @@ route('POST', '/api/dev/gift-card', async (req, res, body, user) => {
   /* Новый вид карточки — создаём на лету */
   if (!GIFT_TYPES[type] && !db.giftTypes[type]) {
     db.giftTypes[type] = {
-      name: String(body.name || type).slice(0, 30),
+      name: cleanName(body.name || type, 30) || type,
       total: 0,
-      rarity: String(body.rarity || 'Редкая').slice(0, 20),
+      rarity: cleanName(body.rarity || 'Редкая', 20) || 'Редкая',
       rarityNum: Math.max(1, Math.min(5, Number(body.rarityNum) || 3)),
-      desc: String(body.desc || '').slice(0, 200)
+      desc: cleanName(body.desc, 200)
     };
   }
 
@@ -2287,7 +2501,7 @@ route('POST', '/api/dev/report-review', async (req, res, body, user) => {
   if (r.verdict) return send(res, 400, { error: 'По жалобе уже есть решение: ' + r.verdict });
 
   const verdict = ['false', 'valid', 'warn'].includes(body.verdict) ? body.verdict : 'warn';
-  const note = String(body.note || '').slice(0, 300);
+  const note = cleanName(body.note, 300);
   const author = db.users[r.from];
   const target = db.users[r.against];
 
@@ -2497,7 +2711,7 @@ route('POST', '/api/stories/post', async (req, res, body, user) => {
   const mine = db.stories.filter(st => st.user === user.id && now() - st.time < 86400e3);
   if (mine.length >= 10) return send(res, 400, { error: 'Не больше 10 историй в сутки' });
 
-  db.stories.push({ id: uid(), user: user.id, photo, video: isVideo, text: String(body.text || '').slice(0, 100), time: now() });
+  db.stories.push({ id: uid(), user: user.id, photo, video: isVideo, text: cleanName(body.text, 100), time: now() });
   save();
   send(res, 200, { stories: storiesFeed(user) });
 });
@@ -2771,7 +2985,7 @@ route('POST', '/api/channels/leave', async (req, res, body, user) => {
    отвечаешь через /api/bot/<токен>/send. */
 
 route('POST', '/api/bots/create', async (req, res, body, user) => {
-  const name = String(body.name || '').trim().slice(0, 30);
+  const name = cleanName(body.name, 30);
   const uname = normUsername(body.username);
 
   if (!name) return send(res, 400, { error: 'Введите имя бота' });
@@ -2863,6 +3077,7 @@ route('POST', '/api/usernames/claim', async (req, res, body, user) => {
 
   if (username.length < 5) return send(res, 400, { error: 'Минимум 5 символов' });
   if (db.usernames[username]) return send(res, 400, { error: 'Этот юзернейм уже занят' });
+  if (isProtectedUsername(username)) return send(res, 400, { error: 'Этот юзернейм зарезервирован' });
   if (mine.length >= limit) {
     return send(res, 400, {
       error: isPremium(user) ? 'Все слоты заняты' : `Занято ${limit} из ${limit}. Премиум даёт ${PREMIUM.slots} слотов.`
@@ -2881,6 +3096,7 @@ route('POST', '/api/usernames/sell', async (req, res, body, user) => {
   const rec = db.usernames[username];
 
   if (!rec || rec.owner !== user.id) return send(res, 403, { error: 'Это не ваш юзернейм' });
+  if (isProtectedUsername(username)) return send(res, 400, { error: 'Юзернейм команды продать нельзя' });
   if (rec.channel) return send(res, 400, { error: 'Юзернейм канала продать нельзя' });
   if (rec.frozen) return send(res, 400, { error: 'Юзернейм в активной сделке' });
   if (!(price > 0)) return send(res, 400, { error: 'Укажите цену' });
@@ -2905,6 +3121,7 @@ route('POST', '/api/usernames/delete', async (req, res, body, user) => {
   const username = normUsername(body.username);
   const rec = db.usernames[username];
   if (!rec || rec.owner !== user.id) return send(res, 403, { error: 'Это не ваш юзернейм' });
+  if (isProtectedUsername(username)) return send(res, 400, { error: 'Юзернейм команды удалить нельзя' });
   if (rec.main) {
     const spare = Object.entries(db.usernames).find(([un, v]) =>
       v.owner === user.id && un !== username && !v.channel && !v.frozen);
@@ -2935,7 +3152,7 @@ route('POST', '/api/usernames/unsell', async (req, res, body, user) => {
 /* ---------- Верификация ---------- */
 
 route('POST', '/api/verify/request', async (req, res, body, user) => {
-  const name = String(body.name || '').trim().slice(0, 60);
+  const name = cleanName(body.name, 60);
   const kind = ['company', 'public', 'dev'].includes(body.kind) ? body.kind : 'company';
   if (!name) return send(res, 400, { error: 'Укажите название или имя' });
 
@@ -3041,7 +3258,6 @@ const OPEN_ROUTES = [
   'POST /api/auth/telegram/start',
   'POST /api/auth/telegram/check',
   'POST /telegram/webhook',
-  'POST /api/admin/deals',
   'GET /api/config',
   'GET /api/health',
   'GET /api/health'
@@ -3049,8 +3265,11 @@ const OPEN_ROUTES = [
 
 
 /* ===== PUSH-УВЕДОМЛЕНИЯ ===== */
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC || 'BGA17iH6l25CJBuj94BkyOxiSjqU9Y3DMSTe-yrCnYBkQ6zWVngCz_oRu53O7tNNFknpLfU5NmLYpSvHCXYDCLs';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE || 'vOrmFqu0vvr-cYlc_MQPqu7dn-D3zul3HCvwnFSlO7I';
+/* Ключи push-уведомлений только из переменных окружения. Старая пара
+   лежала в коде публичного репозитория — она скомпрометирована навсегда. */
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC || '';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || '';
+const PUSH_ENABLED = !!(VAPID_PUBLIC && VAPID_PRIVATE);
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:newchat@example.com';
 
 function b64url(buf) {
@@ -3089,6 +3308,7 @@ function pushWeb(sub, ttl) {
   });
 }
 function notifyPush(userId) {
+  if (!PUSH_ENABLED) return;
   const u = db.users[userId];
   if (!u || !u.pushSubs || !u.pushSubs.length) return;
   if (isOnline(userId)) return;
@@ -3421,7 +3641,7 @@ route('POST', '/api/profile/style', async (req, res, body, user) => {
       const data = String(m.data || '');
       const cleanAudio = sanitizeDataUrl(data, 'audio', Math.round(MUSIC_MB * 1.37 * 1024 * 1024));
       if (!cleanAudio) return send(res, 400, { error: 'Нужен музыкальный файл до ' + MUSIC_MB + ' МБ' });
-      user.music = { data: cleanAudio, name: String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, '').slice(0, 60), size: Math.round(data.length * 0.75) };
+      user.music = { data: cleanAudio, name: cleanName(String(m.name || 'Трек').replace(/\.[a-z0-9]+$/i, ''), 60) || 'Трек', size: Math.round(data.length * 0.75) };
     }
   }
   if (body.coverImg !== undefined) {
@@ -3440,7 +3660,7 @@ route('POST', '/api/profile/style', async (req, res, body, user) => {
     user.cover = n;
     user.coverImg = null;
   }
-  if (body.bio !== undefined) user.bio = cleanText(body.bio, 140);
+  if (body.bio !== undefined) user.bio = cleanName(body.bio, 140);
   if (body.icon !== undefined) {
     if (!isPremium(user)) return send(res, 403, { error: 'Смена иконки доступна с премиумом' });
     user.icon = String(body.icon || '').slice(0, 20);
@@ -3612,6 +3832,11 @@ route('POST', '/api/help/ask', async (req, res, body, user) => {
    Считаем запросы по IP. Обычному человеку хватает десятков в минуту,
    а бот выдаёт сотни — его и придерживаем. */
 /* Чистим текст от того, чем можно сломать чужое приложение */
+/* Имена, статусы, описания: то же, что cleanText, плюс вырезаем символы,
+   с помощью которых вырываются из HTML-атрибутов и разметки */
+function cleanName(v, max) {
+  return cleanText(String(v == null ? '' : v).replace(/[<>"'`\\]/g, ''), max);
+}
 function cleanText(v, max) {
   let t = String(v == null ? '' : v);
   t = t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ''); /* управляющие символы */
@@ -3679,12 +3904,12 @@ setInterval(() => {
 }, 600000);
 
 const server = http.createServer(async (req, res) => {
+  if (!originAllowed(req, res)) {
+    res.writeHead(403, baseHeaders(res));
+    return res.end('{"error":"Запрос с чужого сайта"}');
+  }
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-    });
+    res.writeHead(204, baseHeaders(res));
     return res.end();
   }
 
@@ -3702,11 +3927,10 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {}
   const rl = rateCheck(req, url, rlUser);
   if (!rl.ok) {
-    res.writeHead(429, {
+    res.writeHead(429, Object.assign({
       'content-type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
       'Retry-After': String(rl.retry)
-    });
+    }, baseHeaders(res)));
     return res.end(JSON.stringify({
       error: (rl.reason || 'Слишком много запросов') + '. Подождите ' + Math.ceil(rl.retry / 60) + ' мин.'
     }));
@@ -3763,11 +3987,28 @@ const server = http.createServer(async (req, res) => {
     user = userByToken(token);
     if (!user) return send(res, 401, { error: 'Требуется вход' });
     rememberIp(user, req);
-    user.lastSeen = now(); /* «был в сети» обновляется любым запросом */
+    user.lastSeen = now();
+
+    /* Дев-панель: роль + второй ключ из DEV_SECRET в заголовке X-Dev-Key.
+       Украденного токена разработчика для неё больше недостаточно. */
+    if (url.startsWith('/api/dev/')) {
+      if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+      if (!DEV_SECRET) return send(res, 403, { error: 'Дев-панель выключена: на сервере не задан DEV_SECRET' });
+      if (!safeEqual(req.headers['x-dev-key'], DEV_SECRET)) {
+        devKeyFailed(req, user);
+        return send(res, 428, { error: 'Нужен ключ разработчика', devKey: true });
+      }
+    } /* «был в сети» обновляется любым запросом */
   }
 
   try {
     const body = req.method === 'POST' ? await readBody(req) : {};
+    if (url.startsWith('/api/dev/')) {
+      audit(user, req, url, body);
+      if (body && (body.ban === true || url.endsWith('/broadcast') || url.endsWith('/purge') || url.endsWith('/deals'))) {
+        alertOwner('Дев-действие ' + url + ' от @' + (user.username || user.id) + ' (' + clientIp(req) + ')');
+      }
+    }
     await handler(req, res, body, user);
   } catch (e) {
     console.error(e);
@@ -3775,24 +4016,50 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server, path: '/ws', maxPayload: 256 * 1024,
+  /* Чужой сайт не может открыть сокет от имени открытой вкладки */
+  verifyClient: info => {
+    const origin = String(info.origin || info.req.headers.origin || '').replace(/\/$/, '');
+    return !origin || ALLOWED_ORIGINS.includes(origin);
+  }
+});
 
 wss.on('connection', (ws, req) => {
-  const token = new URL(req.url, 'http://x').searchParams.get('token');
-  const user = userByToken(token);
-  /* Без этой проверки забаненный держал открытый сокет и продолжал работать */
-  if (!user || user.banned) return ws.close(4003, 'banned');
-  rememberIp(user, req);
-
-  if (!sockets.has(user.id)) sockets.set(user.id, new Set());
-  sockets.get(user.id).add(ws);
+  /* Токен больше не ездит в адресе (адреса попадают в логи прокси и хостинга).
+     Клиент присылает его первым сообщением {type:'auth', token}. 10 секунд
+     на это — иначе соединение закрывается. */
+  let user = null;
+  let wsToken = '';
+  let msgCount = 0;
+  let msgWindow = now();
+  const authTimer = setTimeout(() => { if (!user) { try { ws.close(4001, 'auth'); } catch (e) {} } }, 10000);
 
   /* Сигналинг звонков: клиенты обмениваются WebRTC-пакетами через нас.
      Сами звонки идут напрямую между телефонами, сервер видит только «конверты». */
   ws.on('message', raw => {
-    if (user.banned) { try { ws.close(4003, 'banned'); } catch (e) {} return; }
     let d;
     try { d = JSON.parse(String(raw).slice(0, 200000)); } catch (e) { return; }
+
+    if (!user) {
+      if (!d || d.type !== 'auth') return;
+      const u = userByToken(String(d.token || ''));
+      if (!u || u.banned) { try { ws.close(4003, 'banned'); } catch (e) {} return; }
+      user = u;
+      wsToken = String(d.token);
+      clearTimeout(authTimer);
+      rememberIp(user, req);
+      if (!sockets.has(user.id)) sockets.set(user.id, new Set());
+      sockets.get(user.id).add(ws);
+      try { ws.send(JSON.stringify({ type: 'auth', ok: true })); } catch (e) {}
+      return;
+    }
+
+    /* Каждое сообщение: сессия жива, бана нет, частота в норме */
+    if (user.banned || db.tokens[wsToken] !== user.id) { try { ws.close(4003, 'session'); } catch (e) {} return; }
+    const t = now();
+    if (t - msgWindow > 10000) { msgWindow = t; msgCount = 0; }
+    if (++msgCount > 200) { try { ws.close(4008, 'flood'); } catch (e) {} return; }
 
     if (d.type === 'typing') {
       const chat = db.chats[String(d.chatId || '')];
@@ -3824,6 +4091,8 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    clearTimeout(authTimer);
+    if (!user) return;
     const set = sockets.get(user.id);
     if (set) {
       set.delete(ws);
@@ -3888,8 +4157,138 @@ function purgeUnsafeMedia() {
   return bad;
 }
 
-load().then(() => {
+/* ===== СБРОС ВСЕХ СЕССИЙ =====
+   Меняется SESSION_EPOCH на Render — сгорают все токены, коды входа
+   и незавершённые входы через Telegram. Украденные токены умирают. */
+function applySessionEpoch() {
+  if (!SESSION_EPOCH || db.sessionEpoch === SESSION_EPOCH) return;
+  const n = Object.keys(db.tokens || {}).length;
+  db.tokens = {};
+  db.codes = {};
+  db.tgSessions = {};
+  for (const ws of wss.clients) { try { ws.close(4003, 'epoch'); } catch (e) {} }
+  db.sessionEpoch = SESSION_EPOCH;
+  save();
+  console.warn('SESSION_EPOCH=' + SESSION_EPOCH + ': сброшено сессий — ' + n + '. Все входят заново.');
+}
+
+/* ===== РЕЗЕРВНАЯ КОПИЯ =====
+   Целиком базу в ту же базу не копируем: на бесплатном Neon всего 500 МБ,
+   вторая копия туда просто не влезет. Полный снимок делается в самом Neon
+   кнопкой Branch (копия «на лету», места почти не занимает).
+   Здесь сохраняем только то, что собираемся удалить. */
+async function backupPart(note, payload) {
+  const data = JSON.stringify(payload);
+  if (pgPool) {
+    await pgPool.query('CREATE TABLE IF NOT EXISTS newchat_db_backup (id bigserial PRIMARY KEY, note text, data jsonb, created_at timestamptz DEFAULT now())');
+    await pgPool.query('INSERT INTO newchat_db_backup (note, data) VALUES ($1, $2)', [String(note || ''), data]);
+    console.log('Сохранена копия удаляемых данных в newchat_db_backup (' + note + '), ' + Math.round(data.length / 1024) + ' КБ');
+  } else {
+    const f = DATA_FILE + '.bak-' + Date.now();
+    fs.writeFileSync(f, data);
+    console.log('Копия удаляемых данных: ' + f);
+  }
+}
+
+/* ===== УДАЛЕНИЕ РЕГИСТРАЦИЙ ЗА ОКНО ВРЕМЕНИ =====
+   Сносит аккаунты, созданные в интервале, со всеми следами: юзернеймы,
+   токены, чаты, сделки, сторисы, жалобы, карточки, боты. Команду не трогает. */
+function purgeUsersCreatedBetween(from, to) {
+  const victims = new Set();
+  for (const u of Object.values(db.users)) {
+    if (isDev(u) || isCodev(u)) continue;
+    if (DEV_USER_IDS.includes(u.id) || DEV_USERNAMES.includes(u.username || '')) continue;
+    if ((u.createdAt || 0) >= from && (u.createdAt || 0) < to) victims.add(u.id);
+  }
+  /* Боты, чьи владельцы попали под чистку */
+  for (const u of Object.values(db.users)) if (u.isBot && victims.has(u.owner)) victims.add(u.id);
+  if (!victims.size) return { users: 0 };
+
+  const r = { users: victims.size, usernames: 0, tokens: 0, chats: 0, deals: 0, stories: 0, reports: 0, gifts: 0, bots: 0, list: [] };
+  for (const id of victims) {
+    const u = db.users[id];
+    r.list.push('@' + (u.username || '-') + ' (' + (u.email || (u.phone ? '+7' + u.phone : '')) + ')');
+  }
+  for (const [un, v] of Object.entries(db.usernames)) if (victims.has(v.owner)) { delete db.usernames[un]; r.usernames++; }
+  for (const [t, id] of Object.entries(db.tokens)) if (victims.has(id)) { delete db.tokens[t]; r.tokens++; }
+  for (const [t, id] of Object.entries(db.botTokens || {})) if (victims.has(id)) { delete db.botTokens[t]; r.bots++; }
+  for (const id of victims) delete (db.botUpdates || {})[id];
+  for (const [cid, c] of Object.entries(db.chats)) {
+    const hit = (c.members || []).some(m => victims.has(m)) || victims.has(c.owner);
+    if (!hit) continue;
+    if (c.type === 'channel' && !victims.has(c.owner)) {
+      c.members = c.members.filter(m => !victims.has(m));
+      continue;
+    }
+    delete db.chats[cid]; r.chats++;
+  }
+  for (const [did, d] of Object.entries(db.deals)) {
+    if (victims.has(d.seller) || victims.has(d.buyer)) {
+      const rec = db.usernames[d.username];
+      if (rec) rec.frozen = false;
+      delete db.deals[did]; r.deals++;
+    }
+  }
+  const before = db.stories.length;
+  db.stories = db.stories.filter(st => !victims.has(st.user));
+  r.stories = before - db.stories.length;
+  const rb = db.reports.length;
+  db.reports = db.reports.filter(x => !victims.has(x.from));
+  r.reports = rb - db.reports.length;
+  if (db.gifts) { const g = db.gifts.length; db.gifts = db.gifts.filter(x => !victims.has(x.owner)); r.gifts = g - db.gifts.length; }
+  if (db.verifyRequests) db.verifyRequests = db.verifyRequests.filter(x => !victims.has(x.user));
+  for (const id of victims) delete db.history[id];
+  for (const [k, v] of Object.entries(db.tgSessions || {})) {
+    if (victims.has(v.linkFor) || (v.token && victims.has(db.tokens[v.token]))) delete db.tgSessions[k];
+  }
+  for (const u of Object.values(db.users)) {
+    if (u.blocked) for (const id of victims) delete u.blocked[id];
+  }
+  for (const id of victims) delete db.users[id];
+  return r;
+}
+
+async function applyPurgeWindow() {
+  const m = /^(\S+)\.\.(\S+)$/.exec(PURGE_REGISTRATIONS.trim());
+  if (!m) return;
+  const from = Date.parse(m[1]), to = Date.parse(m[2]);
+  if (!(from > 0) || !(to > from)) { console.error('PURGE_REGISTRATIONS: не разобрал даты'); return; }
+  db.purgedWindows = db.purgedWindows || {};
+  if (db.purgedWindows[PURGE_REGISTRATIONS]) return; /* уже выполнено */
+  /* Снимок только тех аккаунтов, которые уходят — без медиа, чтобы копия была лёгкой */
+  const doomed = Object.values(db.users)
+    .filter(u => !isDev(u) && !isCodev(u) && (u.createdAt || 0) >= from && (u.createdAt || 0) < to)
+    .map(u => ({ id: u.id, username: u.username, name: u.name, email: u.email, phone: u.phone, createdAt: u.createdAt, ips: u.ips || [] }));
+  await backupPart('удалённые регистрации ' + PURGE_REGISTRATIONS, doomed);
+  const r = purgeUsersCreatedBetween(from, to);
+  db.purgedWindows[PURGE_REGISTRATIONS] = { time: now(), result: Object.assign({}, r, { list: undefined }) };
+  save();
+  console.warn('ЧИСТКА РЕГИСТРАЦИЙ ' + m[1] + ' — ' + m[2] + ': ' + JSON.stringify(Object.assign({}, r, { list: undefined })));
+  if (r.list && r.list.length) console.warn('Удалены: ' + r.list.join(', '));
+}
+
+function logDevAccounts() {
+  const devs = Object.values(db.users).filter(u => isDev(u));
+  if (!devs.length) {
+    console.warn('РАЗРАБОТЧИКИ: ни одного. Задайте DEV_USERNAMES или DEV_USER_IDS на Render.');
+    return;
+  }
+  console.log('РАЗРАБОТЧИКИ: ' + devs.map(u => '@' + u.username + ' → id ' + u.id).join(', '));
+  if (!DEV_USER_IDS.length) console.warn('Совет: впишите эти id в DEV_USER_IDS — тогда роль не зависит от юзернейма.');
+  if (!DEV_SECRET) console.warn('DEV_SECRET не задан — дев-панель выключена.');
+}
+
+route('POST', '/api/dev/audit', async (req, res, body, user) => {
+  if (!isDev(user)) return send(res, 403, { error: 'Только для разработчиков' });
+  send(res, 200, { audit: (db.audit || []).slice(-200).reverse() });
+});
+
+load().then(async () => {
+  applySessionEpoch();
   purgeUnsafeMedia();
+  await applyPurgeWindow();
+  logDevAccounts();
+  if (!PUSH_ENABLED) console.warn('Push выключен: задайте VAPID_PUBLIC и VAPID_PRIVATE на Render.');
   server.listen(PORT, () => {
     console.log('Newchat-сервер запущен на порту ' + PORT);
   const ways = [];
